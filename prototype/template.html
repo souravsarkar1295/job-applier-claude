@@ -1,0 +1,408 @@
+<title>PM Job Board</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: operator console. Left rail nav, scannable list in the centre, detail drawer on the right. Phone: bottom tabs, full-screen drawer. */
+:root{
+  --bg:#F3F5F7; --surface:#FFFFFF; --sunk:#E9EDF1; --ink:#131A24; --muted:#5A6576; --line:#D9DFE6;
+  --accent:#0B6E69; --accent-ink:#FFFFFF; --accent-soft:#DDEFEC; --star:#C98612; --star-soft:#FBEFD6;
+  --good:#1D7F49; --good-soft:#DDF1E4; --warn:#9A6400; --warn-soft:#F8ECD3; --bad:#B23A28; --bad-soft:#F7E0DB;
+  --display:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+  --body:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --r:10px; --rail:216px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0D1116; --surface:#151B23; --sunk:#1C232D; --ink:#E6EBF1; --muted:#97A2B2; --line:#27303C;
+  --accent:#3BB4AB; --accent-ink:#06211F; --accent-soft:#12312F; --star:#EDB24B; --star-soft:#3A2E14;
+  --good:#5CC98A; --good-soft:#163323; --warn:#E3B05A; --warn-soft:#3A2D12; --bad:#F08A78; --bad-soft:#3D1E19; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0D1116; --surface:#151B23; --sunk:#1C232D; --ink:#E6EBF1; --muted:#97A2B2; --line:#27303C;
+  --accent:#3BB4AB; --accent-ink:#06211F; --accent-soft:#12312F; --star:#EDB24B; --star-soft:#3A2E14;
+  --good:#5CC98A; --good-soft:#163323; --warn:#E3B05A; --warn-soft:#3A2D12; --bad:#F08A78; --bad-soft:#3D1E19; color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:14px;line-height:1.45}
+a{color:var(--accent)}
+button,select,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.app{display:grid;grid-template-columns:var(--rail) minmax(0,1fr);min-height:100%}
+.rail{position:sticky;top:env(safe-area-inset-top,0px);height:100vh;padding:20px 14px;border-right:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;gap:18px}
+.brand{font-family:var(--display);font-weight:700;font-size:19px;letter-spacing:-.01em;padding:0 8px}
+.brand small{display:block;font-family:var(--body);font-weight:400;font-size:12px;color:var(--muted);letter-spacing:0}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:8px;color:var(--ink);text-decoration:none;font-weight:500}
+.nav a:hover{background:var(--sunk)}
+.nav a[aria-current="page"]{background:var(--accent-soft);color:var(--accent)}
+.nav .count{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.rail .foot{margin-top:auto;font-size:12px;color:var(--muted);padding:0 8px}
+main{min-width:0;padding-block:22px 80px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+.banner{display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border:1px dashed var(--line);border-radius:var(--r);color:var(--muted);font-size:13px;background:var(--surface)}
+h1{font-family:var(--display);font-weight:700;font-size:28px;letter-spacing:-.015em;margin:0;text-wrap:balance}
+h2{font-family:var(--display);font-weight:600;font-size:18px;margin:0;letter-spacing:-.01em}
+.sub{color:var(--muted);margin:2px 0 0}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;display:flex;flex-direction:column;gap:2px;text-align:left;cursor:pointer}
+.kpi:hover{border-color:var(--accent)}
+.kpi b{font-family:var(--mono);font-size:24px;font-weight:500}
+.kpi span{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.kpi.alert b{color:var(--bad)}
+.section{display:flex;flex-direction:column;gap:10px}
+.sechead{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+.list{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.row{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:14px;align-items:center;padding:11px 14px;border-top:1px solid var(--line);cursor:pointer}
+.row:first-child{border-top:0}
+.row:hover{background:var(--sunk)}
+.score{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;font-family:var(--mono);font-weight:500;font-size:15px;background:conic-gradient(var(--accent) calc(var(--s)*1%),var(--sunk) 0);position:relative}
+.score::after{content:"";position:absolute;inset:4px;border-radius:50%;background:var(--surface)}
+.row:hover .score::after{background:var(--sunk)}
+.score span{position:relative;z-index:1}
+.t1{font-weight:600;overflow-wrap:anywhere}
+.t2{color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;padding:2px 7px;border-radius:999px;background:var(--sunk);color:var(--muted);white-space:nowrap}
+.chip.cv{background:var(--accent-soft);color:var(--accent);font-weight:500}
+.chip.star{background:var(--star-soft);color:var(--star);font-weight:600}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chip.bad{background:var(--bad-soft);color:var(--bad)}
+.chip.good{background:var(--good-soft);color:var(--good)}
+.side{display:flex;flex-direction:column;align-items:flex-end;gap:4px;font-size:12px;color:var(--muted);text-align:right}
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:10px}
+.filters input[type=search]{flex:1 1 220px;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.filters select{padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);max-width:100%}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex-wrap:wrap}
+.seg button{border:0;background:transparent;padding:6px 10px;cursor:pointer;font-size:13px}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.tog{display:inline-flex;gap:6px;align-items:center;font-size:13px;color:var(--muted);cursor:pointer}
+.btn{border:1px solid var(--line);background:var(--surface);padding:7px 12px;border-radius:8px;cursor:pointer;font-weight:500}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.danger{color:var(--bad)}
+.empty{padding:26px 18px;text-align:center;color:var(--muted)}
+.empty b{display:block;color:var(--ink);font-size:15px;margin-bottom:4px}
+.board{display:grid;grid-template-columns:repeat(6,minmax(180px,1fr));gap:10px;overflow-x:auto;padding-bottom:6px}
+.col{background:var(--sunk);border-radius:var(--r);padding:10px;display:flex;flex-direction:column;gap:8px;min-height:180px}
+.col h3{margin:0;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);display:flex;justify-content:space-between}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:9px 10px;display:flex;flex-direction:column;gap:6px;cursor:pointer}
+.card select{font-size:12px;padding:3px 4px;border-radius:6px;border:1px solid var(--line);background:var(--bg)}
+.bars{display:flex;flex-direction:column;gap:7px}
+.bar{display:grid;grid-template-columns:minmax(90px,170px) minmax(0,1fr) 44px;gap:10px;align-items:center;font-size:13px}
+.bar .track{height:9px;background:var(--sunk);border-radius:5px;overflow:hidden}
+.bar .fill{height:100%;background:var(--accent);border-radius:5px}
+.bar .fill.bad{background:var(--bad)} .bar .fill.warn{background:var(--warn)} .bar .fill.good{background:var(--good)} .bar .fill.star{background:var(--star)}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.check{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:start;padding:10px 0;border-top:1px solid var(--line)}
+.check:first-of-type{border-top:0}
+.dot{width:10px;height:10px;border-radius:50%;margin-top:5px;background:var(--bad)}
+.dot.warn{background:var(--warn)} .dot.good{background:var(--good)}
+.tablewrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:9px 12px;border-top:1px solid var(--line);vertical-align:top}
+th{border-top:0;font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:500;background:var(--sunk);position:sticky;top:0}
+.stack{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--sunk)}
+.stack div{height:100%}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12.5px;color:var(--muted)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+/* drawer */
+.scrim{position:fixed;inset:0;background:rgba(10,14,20,.35);z-index:20}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(560px,100%);background:var(--surface);border-left:1px solid var(--line);z-index:21;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);padding-right:env(safe-area-inset-right,0px)}
+.dhead{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:flex-start}
+.dhead h2{font-size:20px}
+.dbody{padding:16px 18px;overflow-y:auto;display:flex;flex-direction:column;gap:16px}
+.dfoot{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.kv{display:grid;grid-template-columns:120px minmax(0,1fr);gap:6px 12px;font-size:13px}
+.kv dt{color:var(--muted)} .kv dd{margin:0;overflow-wrap:anywhere}
+.label{font-size:11.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin:0 0 4px}
+.prose{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+details summary{cursor:pointer;color:var(--accent);font-weight:500}
+.x{border:0;background:var(--sunk);border-radius:8px;width:34px;height:34px;cursor:pointer;flex:none;margin-left:auto;font-size:18px;line-height:1}
+.toast{position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:8px;font-size:13px;z-index:30}
+.tabs{display:none}
+@media (max-width:860px){
+  .app{grid-template-columns:minmax(0,1fr)}
+  .rail{display:none}
+  .tabs{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:15;background:var(--surface);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px);padding-left:max(4px,env(safe-area-inset-left,0px));padding-right:max(4px,env(safe-area-inset-right,0px));overflow-x:auto}
+  .tabs a{flex:1 0 auto;text-align:center;padding:10px 8px;font-size:12.5px;color:var(--muted);text-decoration:none;font-weight:500}
+  .tabs a[aria-current="page"]{color:var(--accent)}
+  .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .grid2{grid-template-columns:minmax(0,1fr)}
+  .row{grid-template-columns:46px minmax(0,1fr)}
+  .side{grid-column:2;align-items:flex-start;text-align:left;flex-direction:row;flex-wrap:wrap;gap:8px}
+  .kv{grid-template-columns:100px minmax(0,1fr)}
+  h1{font-size:24px}
+}
+@media (prefers-reduced-motion:no-preference){.drawer{animation:slide .18s ease-out}@keyframes slide{from{transform:translateX(24px);opacity:.6}}}
+</style>
+
+<div class="app">
+  <aside class="rail" aria-label="Sections">
+    <div class="brand">PM Job Board<small>Sourav's search, one place</small></div>
+    <nav class="nav" id="nav"></nav>
+    <div class="foot" id="railfoot"></div>
+  </aside>
+  <main><div class="wrap" id="view"></div></main>
+</div>
+<nav class="tabs" id="tabs" aria-label="Sections"></nav>
+<div id="overlay"></div>
+
+<script>
+const DATA = __DATA__;
+const JOBS = DATA.jobs, COMPANIES = DATA.companies;
+const byId = Object.fromEntries(JOBS.map(j => [j.id, j]));
+const VIEWS = [["today","Today"],["roles","Roles"],["shortlist","Shortlist"],["tracker","Tracker"],["companies","Companies"],["health","Board health"]];
+const STAGES = ["Applied","Screening","Interviewing","Offer","Rejected","No response"];
+const KEY = "pm-board-proto-v1";
+let state = {s:{}};
+try { state = JSON.parse(localStorage.getItem(KEY)) || state; } catch(e) {}
+function save(){ try { localStorage.setItem(KEY, JSON.stringify(state)); } catch(e) {} }
+const st = id => state.s[id] || {};
+const setSt = (id, patch) => { state.s[id] = Object.assign({}, st(id), patch); save(); };
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtDate = d => d ? new Date(d+"T00:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"}) : "–";
+const ago = n => n==null ? "unknown" : n===0 ? "today" : n===1 ? "1 day ago" : n+" days ago";
+const isOpen = j => j.listing === "Open";
+const shortlisted = () => JOBS.filter(j => st(j.id).list === "short");
+const tracked = () => JOBS.filter(j => STAGES.includes(st(j.id).stage));
+const dismissed = id => st(id).list === "dismissed";
+
+function chipsFor(j, opts={}){
+  const c = [];
+  if (j.tier) c.push(`<span class="chip star">${esc(j.tier)}</span>`);
+  c.push(`<span class="chip cv">CV: ${esc(j.cv)}</span>`);
+  c.push(`<span class="chip">${esc(j.seniority||"Other")}</span>`);
+  if (j.mode && j.mode!=="Unknown") c.push(`<span class="chip">${esc(j.mode)}</span>`);
+  if (j.fit) c.push(`<span class="chip ${j.fit==="Strong"?"good":""}">${esc(j.fit)}</span>`);
+  if (!opts.noflags) j.flags.forEach(f => c.push(`<span class="chip ${/re-checked|text/.test(f)?"warn":"bad"}">${esc(f)}</span>`));
+  return `<div class="chips">${c.join("")}</div>`;
+}
+function rowHTML(j){
+  const s = st(j.id);
+  const tag = s.stage ? `<span class="chip good">${esc(s.stage)}</span>` : s.list==="short" ? `<span class="chip cv">Shortlisted</span>` : "";
+  return `<div class="row" role="button" tabindex="0" data-open="${j.id}">
+    <div class="score" style="--s:${j.score}"><span>${j.score}</span></div>
+    <div style="min-width:0"><div class="t1">${esc(j.role)}</div>
+      <div class="t2">${esc(j.company)} · ${esc(j.location)}</div>${chipsFor(j)}</div>
+    <div class="side"><span class="num">Found ${fmtDate(j.found)}</span><span>${esc(j.ats)}</span>${tag}</div></div>`;
+}
+function bar(label, n, max, cls=""){ const w = max ? Math.max(1, Math.round(n/max*100)) : 0;
+  return `<div class="bar"><span style="overflow-wrap:anywhere">${esc(label)}</span><div class="track"><div class="fill ${cls}" style="width:${w}%"></div></div><span class="num" style="text-align:right">${n}</span></div>`; }
+function countBy(arr, f){ const m = {}; arr.forEach(x => { const k = f(x); m[k] = (m[k]||0)+1; }); return Object.entries(m).sort((a,b)=>b[1]-a[1]); }
+
+/* ---------- views ---------- */
+function vToday(){
+  const open = JOBS.filter(j => isOpen(j) && !dismissed(j.id));
+  const top = open.filter(j => !st(j.id).stage).sort((a,b)=>b.score-a.score).slice(0,10);
+  const recent = JOBS.filter(j => j.found && (new Date(DATA.generated)-new Date(j.found))/864e5 <= 1).length;
+  const stale = JOBS.filter(j => j.flags.includes("Not re-checked 14d+")).length;
+  const t1new = JOBS.filter(j => j.tier==="Tier 1" && j.found && (new Date(DATA.generated)-new Date(j.found))/864e5 <= 7);
+  const d = new Date(DATA.generated+"T00:00:00").toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"});
+  return `
+  <div><h1>Today</h1><p class="sub">${d} · ${JOBS.length} roles tracked from ${new Set(JOBS.map(j=>j.company)).size} companies · ${recent} found in the last 24 hours</p></div>
+  ${banner()}
+  <div class="kpis">
+    <button class="kpi" data-go="roles"><b>${open.length}</b><span>Marked open</span></button>
+    <button class="kpi alert" data-go="health"><b>${stale}</b><span>Need re-check</span></button>
+    <button class="kpi" data-go="shortlist"><b>${shortlisted().length}</b><span>Shortlisted</span></button>
+    <button class="kpi" data-go="tracker"><b>${tracked().length}</b><span>In tracker</span></button>
+  </div>
+  <section class="section"><div class="sechead"><h2>Top 10 by score</h2><a href="#roles">See all roles</a></div>
+    <div class="list">${top.map(rowHTML).join("") || `<div class="empty"><b>Nothing left to review</b>Every open role is shortlisted, dismissed or tracked.</div>`}</div></section>
+  <section class="section"><div class="sechead"><h2>Tier 1 companies, found this week</h2><span class="t2">${t1new.length} roles</span></div>
+    <div class="list">${t1new.sort((a,b)=>b.score-a.score).slice(0,6).map(rowHTML).join("") || `<div class="empty"><b>No Tier 1 roles found in the last 7 days</b>The automation found nothing new at your Tier 1 companies this week.</div>`}</div></section>`;
+}
+function banner(){ return `<div class="banner"><span>Prototype built on a snapshot of your Google Sheet taken ${fmtDate(DATA.generated)}. Scores, CV suggestions and flags are computed from that snapshot. Shortlists and tracker moves are saved in this browser only.</span></div>`; }
+
+const F = {q:"", country:"All", seniority:"All", cv:"All", fit:"All", source:"All", hideRights:false, hideStale:false, sort:"score", limit:60};
+function vRoles(){
+  const opt = (k, vals) => `<select id="f-${k}" data-f="${k}" aria-label="${k}">${["All",...vals].map(v=>`<option ${F[k]===v?"selected":""}>${esc(v)}</option>`).join("")}</select>`;
+  const uniq = f => [...new Set(JOBS.map(f).filter(Boolean))].sort();
+  let list = JOBS.filter(j => !dismissed(j.id));
+  const q = F.q.toLowerCase();
+  if (q) list = list.filter(j => (j.company+" "+j.role+" "+j.location+" "+j.category).toLowerCase().includes(q));
+  if (F.country!=="All") list = list.filter(j => j.country===F.country);
+  if (F.seniority!=="All") list = list.filter(j => j.seniority===F.seniority);
+  if (F.cv!=="All") list = list.filter(j => j.cv.includes(F.cv));
+  if (F.fit!=="All") list = list.filter(j => j.fit===F.fit);
+  if (F.source!=="All") list = list.filter(j => j.source===F.source);
+  if (F.hideRights) list = list.filter(j => !j.flags.some(f=>f.startsWith("Work rights")));
+  if (F.hideStale) list = list.filter(j => !j.flags.includes("Not re-checked 14d+"));
+  const sorters = {score:(a,b)=>b.score-a.score, newest:(a,b)=>(b.found||"").localeCompare(a.found||""), company:(a,b)=>a.company.localeCompare(b.company)};
+  list.sort(sorters[F.sort]);
+  return `<div><h1>Roles</h1><p class="sub">${list.length} of ${JOBS.length} roles match. Dismissed roles are hidden.</p></div>
+  <div class="filters">
+    <input type="search" id="f-q" placeholder="Search company, title, city, domain" value="${esc(F.q)}" aria-label="Search">
+    <div class="seg" role="group" aria-label="Country">${["All","India","Singapore","UAE","Europe","Remote"].map(c=>`<button data-country="${c}" aria-pressed="${F.country===c}">${c}</button>`).join("")}</div>
+    ${opt("seniority", uniq(j=>j.seniority))}${opt("cv", ["General consumer","AI","Growth","Payments"])}${opt("fit", ["Strong","Moderate"])}${opt("source", uniq(j=>j.source))}
+    <select id="f-sort" data-f="sort" aria-label="Sort"><option value="score" ${F.sort==="score"?"selected":""}>Sort: score</option><option value="newest" ${F.sort==="newest"?"selected":""}>Sort: newest found</option><option value="company" ${F.sort==="company"?"selected":""}>Sort: company</option></select>
+    <label class="tog"><input type="checkbox" id="f-rights" ${F.hideRights?"checked":""}> Hide roles needing work rights</label>
+    <label class="tog"><input type="checkbox" id="f-stale" ${F.hideStale?"checked":""}> Hide not re-checked</label>
+  </div>
+  <div class="list">${list.slice(0,F.limit).map(rowHTML).join("") || `<div class="empty"><b>No roles match these filters</b>Clear a filter to see more.</div>`}</div>
+  ${list.length>F.limit?`<button class="btn" id="more">Show ${Math.min(60,list.length-F.limit)} more</button>`:""}`;
+}
+function vShortlist(){
+  const list = shortlisted().sort((a,b)=>b.score-a.score);
+  return `<div><h1>Shortlist</h1><p class="sub">Roles you plan to apply to. Open the apply link, then mark it applied to move it to the tracker.</p></div>${banner()}
+  <div class="list">${list.map(j => `<div class="row" style="cursor:default">
+      <div class="score" style="--s:${j.score}"><span>${j.score}</span></div>
+      <div style="min-width:0"><div class="t1">${esc(j.role)}</div><div class="t2">${esc(j.company)} · ${esc(j.location)}</div>${chipsFor(j,{noflags:true})}</div>
+      <div class="side" style="flex-direction:row;flex-wrap:wrap;gap:6px">
+        <a class="btn" href="${esc(j.link)}" target="_blank" rel="noopener">Apply link</a>
+        <button class="btn primary" data-applied="${j.id}">Mark applied</button>
+        <button class="btn" data-open="${j.id}">Details</button></div></div>`).join("")
+    || `<div class="empty"><b>Your shortlist is empty</b>Open any role and choose Shortlist. It will appear here with the CV to use and the apply link.</div>`}</div>`;
+}
+function vTracker(){
+  const items = tracked();
+  return `<div><h1>Tracker</h1><p class="sub">${items.length ? items.length+" applications" : "No applications tracked yet"}. Change a card's stage to move it.</p></div>${banner()}
+  <div class="board">${STAGES.map(sname => { const col = items.filter(j=>st(j.id).stage===sname);
+    return `<div class="col"><h3>${sname}<span class="num">${col.length}</span></h3>${col.map(j=>`<div class="card" data-open="${j.id}">
+      <div class="t1" style="font-size:13px">${esc(j.role)}</div><div class="t2">${esc(j.company)}</div>
+      <div class="t2 num">Applied ${fmtDate(st(j.id).appliedAt)} · CV ${esc(st(j.id).cvUsed||j.cv)}</div>
+      <select data-stage="${j.id}" aria-label="Stage" onclick="event.stopPropagation()">${STAGES.map(x=>`<option ${x===sname?"selected":""}>${x}</option>`).join("")}</select></div>`).join("") || `<div class="t2" style="padding:6px 2px">${sname==="Applied"?"Mark a shortlisted role as applied to start.":"Empty"}</div>`}</div>`; }).join("")}</div>`;
+}
+const CF = {tier:"All", cov:"All", q:""};
+function vCompanies(){
+  const cov = countBy(COMPANIES, c=>c.coverage); const tot = COMPANIES.length;
+  const colr = {"Roles found":"var(--good)","No roles found":"var(--warn)","No careers URL":"var(--bad)"};
+  let list = COMPANIES.slice();
+  if (CF.tier!=="All") list = list.filter(c=>c.tier===CF.tier);
+  if (CF.cov!=="All") list = list.filter(c=>c.coverage===CF.cov);
+  if (CF.q) list = list.filter(c=>(c.name+" "+c.geo+" "+c.relevance).toLowerCase().includes(CF.q.toLowerCase()));
+  list.sort((a,b)=> (a.tier.localeCompare(b.tier)) || b.roles-a.roles || a.name.localeCompare(b.name));
+  const atsCount = countBy(COMPANIES, c=>c.ats);
+  return `<div><h1>Companies</h1><p class="sub">${tot} target companies. Coverage shows whether the board actually has roles from each one.</p></div>
+  <div class="panel"><div class="stack">${cov.map(([k,n])=>`<div style="width:${n/tot*100}%;background:${colr[k]}" title="${k}: ${n}"></div>`).join("")}</div>
+    <div class="legend">${cov.map(([k,n])=>`<span><i style="background:${colr[k]}"></i>${k} <b class="num">${n}</b></span>`).join("")}</div>
+    <p class="t2" style="margin:0">Job board known from the careers URL: ${atsCount.map(([k,n])=>`${esc(k)} ${n}`).join(", ")}. Detecting the board for the rest is what makes daily checks possible.</p></div>
+  <div class="filters"><input type="search" id="c-q" placeholder="Search companies" value="${esc(CF.q)}" aria-label="Search companies">
+    <div class="seg" role="group" aria-label="Tier">${["All","Tier 1","Tier 2"].map(t=>`<button data-tier="${t}" aria-pressed="${CF.tier===t}">${t}</button>`).join("")}</div>
+    <div class="seg" role="group" aria-label="Coverage">${["All","Roles found","No roles found","No careers URL"].map(t=>`<button data-cov="${t}" aria-pressed="${CF.cov===t}">${t}</button>`).join("")}</div></div>
+  <div class="tablewrap"><table><thead><tr><th>Company</th><th>Tier</th><th>Geography</th><th>Job board</th><th>Roles</th><th>Coverage</th><th>Focus</th></tr></thead><tbody>
+  ${list.map(c=>`<tr><td><b>${esc(c.name)}</b>${c.careers?`<br><a href="${esc(c.careers)}" target="_blank" rel="noopener">Careers page</a>`:""}</td><td>${esc(c.tier)}</td><td>${esc(c.geo)}</td><td>${esc(c.ats)}</td>
+    <td class="num">${c.roles}</td><td><span class="chip ${c.coverage==="Roles found"?"good":c.coverage==="No roles found"?"warn":"bad"}">${c.coverage}</span></td><td class="t2">${esc(c.relevance)}</td></tr>`).join("")}
+  </tbody></table></div>`;
+}
+function vHealth(){
+  const n = JOBS.length;
+  const stale = JOBS.filter(j=>j.flags.includes("Not re-checked 14d+")).length;
+  const textDates = JOBS.filter(j=>j.flags.includes("Date stored as text")).length;
+  const noPosted = JOBS.filter(j=>!j.posted).length;
+  const unknownMode = JOBS.filter(j=>j.mode==="Unknown").length;
+  const keys = countBy(JOBS, j=>(j.company+"|"+j.role+"|"+j.location).toLowerCase()).filter(([k,c])=>c>1).length;
+  const strongShare = Math.round(JOBS.filter(j=>j.fit==="Strong").length/n*100);
+  const contactUnknown = JOBS.filter(j=>j.contact==="Unknown").length;
+  const checks = [
+    ["bad", `${stale} roles marked Open have not been re-checked in 14+ days`, "Most were verified only on the day they were found. A daily check against Greenhouse, Lever, Ashby and Workday would close dead roles automatically.", stale],
+    ["bad", `${noPosted} roles have no posting date`, "Without it you can't sort by newest. Company job board APIs return exact dates.", noPosted],
+    ["warn", `${textDates} rows store Date Found as text`, "Those rows likely drop out of the Sheet's 'New ≤24h' count and date sorting.", textDates],
+    ["warn", `${unknownMode} roles have Work Mode 'Unknown'`, "Filter by remote or hybrid is unreliable until this is filled from the posting.", unknownMode],
+    ["warn", `${strongShare}% of roles are labelled Strong`, "The label doesn't separate the best 10 from the next 250. The score on this board does.", null],
+    ["warn", `${contactUnknown} roles have no known contact`, "Referrals are the highest-yield route. A referral layer would capture connections per company.", contactUnknown],
+    [keys?"warn":"good", `${keys} duplicate company + title + location keys`, "Small today. Matching on requisition ID and URL as well catches reposts with new titles.", keys],
+  ];
+  const max = Math.max(...countBy(JOBS,j=>j.source).map(x=>x[1]));
+  const ages = [["0–7 days",0,7],["8–14 days",8,14],["15–30 days",15,30],["31–45 days",31,45],["45+ days",46,999]].map(([l,a,b])=>[l, JOBS.filter(j=>j.verifiedAge!=null&&j.verifiedAge>=a&&j.verifiedAge<=b).length]);
+  const amax = Math.max(...ages.map(a=>a[1]));
+  const sb = [0,10,20,30,40,50,60,70,80,90].map(b=>[`${b}–${b+9}`, JOBS.filter(j=>j.score>=b&&j.score<b+10).length]); sb[9][1] += JOBS.filter(j=>j.score>=100).length;
+  const smax = Math.max(...sb.map(x=>x[1]));
+  return `<div><h1>Board health</h1><p class="sub">Checks on the data itself, run on the ${fmtDate(DATA.generated)} snapshot of ${n} roles.</p></div>
+  <div class="panel">${checks.map(([lvl,t,d])=>`<div class="check"><span class="dot ${lvl}"></span><div><b>${esc(t)}</b><div class="t2">${esc(d)}</div></div><span></span></div>`).join("")}</div>
+  <div class="grid2">
+    <div class="panel"><h2>Days since last verified</h2><div class="bars">${ages.map(([l,c],i)=>bar(l,c,amax,i<2?"good":i<3?"warn":"bad")).join("")}</div></div>
+    <div class="panel"><h2>Score distribution</h2><div class="bars">${sb.filter(x=>x[1]).map(([l,c])=>bar(l,c,smax)).join("")}</div></div>
+    <div class="panel"><h2>Where roles came from</h2><div class="bars">${countBy(JOBS,j=>j.source).map(([l,c])=>bar(l,c,max)).join("")}</div></div>
+    <div class="panel"><h2>Job board behind the apply link</h2><div class="bars">${(()=>{const a=countBy(JOBS,j=>j.ats);return a.map(([l,c])=>bar(l,c,a[0][1],"star")).join("")})()}</div></div>
+    <div class="panel"><h2>Country</h2><div class="bars">${(()=>{const a=countBy(JOBS,j=>j.country);return a.map(([l,c])=>bar(l,c,a[0][1])).join("")})()}</div></div>
+    <div class="panel"><h2>Suggested CV</h2><div class="bars">${(()=>{const a=countBy(JOBS,j=>j.cv);return a.map(([l,c])=>bar(l,c,a[0][1])).join("")})()}</div></div>
+  </div>`;
+}
+
+/* ---------- drawer ---------- */
+const REASONS = ["Too junior","Too senior","Location","Domain","Work rights","Already applied","Not interested"];
+function openDrawer(id){
+  const j = byId[id]; if (!j) return; const s = st(id);
+  const parts = Object.entries(j.parts);
+  const sig = Object.entries(j.cvSignals).filter(([k,v])=>v).map(([k,v])=>`${k} ${v}`).join(", ") || "no strong signals, so the default";
+  document.getElementById("overlay").innerHTML = `<div class="scrim" data-close></div>
+  <aside class="drawer" role="dialog" aria-modal="true" aria-label="${esc(j.role)}">
+    <div class="dhead"><div class="score" style="--s:${j.score}"><span>${j.score}</span></div>
+      <div style="min-width:0"><h2>${esc(j.role)}</h2><div class="t2">${esc(j.company)} · ${esc(j.location)}</div>${chipsFor(j)}</div>
+      <button class="x" data-close aria-label="Close">×</button></div>
+    <div class="dbody">
+      <div><p class="label">Score breakdown</p><div class="bars">${parts.map(([k,v])=>bar(k, v, k==="Not re-checked"?10:25, v<0?"bad":"")).join("")}</div></div>
+      <div><p class="label">Suggested CV</p><p class="prose"><b>${esc(j.cv)}</b>. Signals counted: ${esc(sig)}.</p></div>
+      <dl class="kv"><dt>Seniority</dt><dd>${esc(j.seniority)}</dd><dt>Work mode</dt><dd>${esc(j.mode)}</dd><dt>Category</dt><dd>${esc(j.category)}</dd>
+        <dt>Experience asked</dt><dd>${j.years?j.years+"+ years":"Not stated"}</dd><dt>Found</dt><dd class="num">${fmtDate(j.found)}</dd><dt>Posted</dt><dd class="num">${j.posted?fmtDate(j.posted):"Not known"}</dd>
+        <dt>Last verified</dt><dd class="num">${fmtDate(j.verified)} (${ago(j.verifiedAge)})</dd><dt>Listing</dt><dd>${esc(j.listing)}</dd><dt>Source</dt><dd>${esc(j.source)} · ${esc(j.ats)}</dd>
+        <dt>Contact</dt><dd>${esc(j.contact)}${j.postedBy?` · ${esc(j.postedBy)}${j.posterRole?", "+esc(j.posterRole):""}`:""}</dd><dt>Sheet row</dt><dd class="num">${j.id}</dd></dl>
+      <div><p class="label">What the role owns</p><p class="prose">${esc(j.summary)}</p></div>
+      <div><p class="label">Key requirements</p><p class="prose">${esc(j.requirements)}</p></div>
+      <div><p class="label">Why it matches, and gaps</p><p class="prose">${esc(j.why)}</p></div>
+      ${j.jd?`<details><summary>Job description</summary><p class="prose" style="margin-top:8px">${esc(j.jd)}</p></details>`:""}
+      ${j.notes?`<details><summary>Notes from the Sheet</summary><p class="prose" style="margin-top:8px">${esc(j.notes)}</p></details>`:""}
+      ${s.list==="dismissed"?`<p class="t2">Dismissed: ${esc(s.reason||"")}</p>`:""}
+    </div>
+    <div class="dfoot">
+      <a class="btn" href="${esc(j.link)}" target="_blank" rel="noopener">Open job</a>
+      ${j.postLink?`<a class="btn" href="${esc(j.postLink)}" target="_blank" rel="noopener">Hiring post</a>`:""}
+      ${s.stage?`<span class="chip good">In tracker: ${esc(s.stage)}</span>`:
+        s.list==="short"?`<button class="btn primary" data-applied="${id}">Mark applied</button><button class="btn" data-unshort="${id}">Remove from shortlist</button>`:
+        `<button class="btn primary" data-short="${id}">Shortlist</button>
+         <select id="dismiss-reason" aria-label="Dismiss reason"><option value="">Dismiss because…</option>${REASONS.map(r=>`<option>${r}</option>`).join("")}</select>`}
+    </div></aside>`;
+  document.querySelector(".drawer .x").focus();
+}
+function closeDrawer(){ document.getElementById("overlay").innerHTML = ""; }
+function toast(msg){ const t = document.createElement("div"); t.className="toast"; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(),1800); }
+
+/* ---------- routing + events ---------- */
+function current(){ const h = location.hash.slice(1); return VIEWS.some(v=>v[0]===h) ? h : "today"; }
+function render(){
+  const v = current();
+  const counts = {roles:JOBS.filter(j=>!dismissed(j.id)).length, shortlist:shortlisted().length, tracker:tracked().length, companies:COMPANIES.length};
+  const nav = VIEWS.map(([k,l])=>`<a href="#${k}" ${k===v?'aria-current="page"':""}><span>${l}</span><span class="count">${counts[k]??""}</span></a>`).join("");
+  document.getElementById("nav").innerHTML = nav;
+  document.getElementById("tabs").innerHTML = VIEWS.map(([k,l])=>`<a href="#${k}" ${k===v?'aria-current="page"':""}>${l}</a>`).join("");
+  document.getElementById("railfoot").innerHTML = `Snapshot ${fmtDate(DATA.generated)}<br>${JOBS.length} roles · ${COMPANIES.length} companies`;
+  const html = {today:vToday, roles:vRoles, shortlist:vShortlist, tracker:vTracker, companies:vCompanies, health:vHealth}[v]();
+  document.getElementById("view").innerHTML = html;
+}
+window.addEventListener("hashchange", () => { closeDrawer(); render(); window.scrollTo(0,0); });
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-open],[data-close],[data-go],[data-short],[data-unshort],[data-applied],[data-country],[data-tier],[data-cov],#more");
+  if (!t) return;
+  if (t.dataset.close !== undefined) return closeDrawer();
+  if (t.dataset.go) { location.hash = t.dataset.go; return; }
+  if (t.dataset.short) { setSt(+t.dataset.short,{list:"short"}); toast("Added to shortlist"); openDrawer(+t.dataset.short); render(); return; }
+  if (t.dataset.unshort) { setSt(+t.dataset.unshort,{list:null}); toast("Removed from shortlist"); closeDrawer(); render(); return; }
+  if (t.dataset.applied) { const id=+t.dataset.applied; setSt(id,{list:null, stage:"Applied", appliedAt:DATA.generated, cvUsed:byId[id].cv}); toast("Moved to tracker as Applied"); closeDrawer(); render(); return; }
+  if (t.dataset.country) { F.country=t.dataset.country; F.limit=60; render(); return; }
+  if (t.dataset.tier) { CF.tier=t.dataset.tier; render(); return; }
+  if (t.dataset.cov) { CF.cov=t.dataset.cov; render(); return; }
+  if (t.id==="more") { F.limit+=60; render(); return; }
+  if (t.dataset.open) openDrawer(+t.dataset.open);
+});
+document.addEventListener("keydown", e => {
+  if (e.key==="Escape") closeDrawer();
+  if (e.key==="Enter" && e.target.matches("[data-open]")) openDrawer(+e.target.dataset.open);
+});
+document.addEventListener("change", e => {
+  const t = e.target;
+  if (t.dataset.f) { F[t.dataset.f]=t.value; F.limit=60; render(); }
+  else if (t.id==="f-rights") { F.hideRights=t.checked; render(); }
+  else if (t.id==="f-stale") { F.hideStale=t.checked; render(); }
+  else if (t.dataset.stage) { setSt(+t.dataset.stage,{stage:t.value}); toast("Moved to "+t.value); render(); }
+  else if (t.id==="dismiss-reason" && t.value) { const id=+document.querySelector("[data-short]").dataset.short; setSt(id,{list:"dismissed", reason:t.value}); toast("Dismissed: "+t.value); closeDrawer(); render(); }
+});
+let qTimer;
+document.addEventListener("input", e => {
+  if (e.target.id==="f-q" || e.target.id==="c-q") { const id=e.target.id; clearTimeout(qTimer); qTimer=setTimeout(()=>{ if(id==="f-q") F.q=e.target.value; else CF.q=e.target.value; render(); const el=document.getElementById(id); el.focus(); el.setSelectionRange(el.value.length,el.value.length); },200); }
+});
+render();
+</script>

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Owner | Sourav Sarkar |
-| Status | Draft v0.3, for review. v0.3 closes the gaps found in the flow check (`docs/test-cases.md`) and adds the end-to-end walkthrough and setup checklist |
+| Status | Draft v0.3.1, for review. v0.3.1 adds the CV rules, run cadence, daily cap and compensation policy. v0.3 closed the gaps found in the flow check (`docs/test-cases.md`) and adds the end-to-end walkthrough and setup checklist |
 | Last updated | 8 November 2026 |
 | Repo | `souravsarkar1295/job-applier-claude` (private) |
 
@@ -32,7 +32,9 @@ Auto-submit, applying without Sourav's laptop and Chrome, online assessments and
 | Submit policy | Always stop before submit. Sourav reviews and submits. Auto-submit may be revisited later |
 | Unknown answers | Flagged and left open, never guessed |
 | Pauses | Go to the dashboard. Notified on the dashboard and by phone push. No email |
-| Batch behaviour | A run processes the whole saved list. Parked jobs don't stop the run |
+| Batch behaviour | A run processes the whole saved list, up to the daily cap. Parked jobs don't stop the run |
+| Run cadence | Sourav starts one or two runs a day |
+| Daily cap | 20 LinkedIn applications a day across all runs. The rest wait for the next day |
 | Tab policy | A filled form stays open in its tab until it is submitted. Refilling from stored values is only for recovery |
 | Dashboard | Interactive web app, not a spreadsheet. Tracker plus review queue |
 | Hosting | Self-hosted: Next.js on Vercel, Supabase (Postgres, Auth, Storage) |
@@ -244,7 +246,7 @@ flowchart TD
 | Triage | Decide whether and how to apply | Check the posting still accepts applications (otherwise `skipped`). Check for an "Applied" badge on LinkedIn or an already-applied message on the portal (then `submitted`, source: already applied). Detect apply type: Easy Apply, or external and which ATS. Check for duplicates (5.4). Choose the CV (5.3) |
 | Fill | Work through every page of the form | Each field is resolved by the engine in section 7 and its value is written to the database as soon as it's entered. Each write also renews the job's lease (section 8.6) |
 | Stop | Never click submit | On the final review page the job moves to `ready_for_review` |
-| Pacing | Wait between jobs | A randomised gap of 60 to 180 seconds between applications, so activity on LinkedIn doesn't arrive in a burst. Configurable. An optional daily cap on LinkedIn applications (open question D12) carries the rest of the queue over to the next run |
+| Pacing | Wait between jobs | A randomised gap of 60 to 180 seconds between applications, so activity on LinkedIn doesn't arrive in a burst. Configurable. A daily cap of 20 LinkedIn applications, counted across all runs that day, leaves the rest `queued` for the next day. With one or two runs a day, the second run of a day only fills what's left under the cap. Jobs on company portals reached from the dream-company flow don't count towards it |
 | Account safety | Stop on any LinkedIn warning | If LinkedIn signs Sourav out, shows a security checkpoint, or shows any message about unusual or automated activity, the run stops at once, every job stays where it is, and Sourav is notified. No run touches LinkedIn again until he says so in chat |
 | Tab policy | Keep the tab open | Every tab that holds a filled or part-filled form stays open in a Chrome tab group named after the run, and its URL and title are stored on the job. The open tab is the working copy. Stored values are the record and the recovery path, not the normal path (section 8.2) |
 | Resume pass | Revisit parked jobs before ending | Any `parked_info` job whose open questions were all answered during the run, and any `parked_action` job Sourav marked done, is resumed in its existing tab |
@@ -268,7 +270,16 @@ Two cases need extra handling. If the link lands on a general careers page inste
 
 ### 5.3 CV selection
 
-Each CV in the library is tagged with the role types it's meant for. The agent compares the job title and description with those tags and picks the closest match. When two CVs score about the same, or none match well, the agent parks the job with a CV question instead of guessing. The chosen CV and the reason are shown in review.
+Sourav has four CVs. The agent reads the job title and description and picks the one that clearly fits.
+
+| CV | Use for | Signals in the job description |
+|---|---|---|
+| General consumer | Most consumer PM roles. The default | No strong signal for one of the others |
+| AI | Pure-play AI companies or AI-heavy roles | The product is AI or ML, for example LLMs, GenAI, ML models, AI agents or AI platform, as the core of the role rather than a passing mention |
+| Growth | Consumer roles focused on growth | Retention, conversion, acquisition, engagement, activation, funnel, experimentation, A/B testing |
+| Payments | Payments roles | Payments, UPI, checkout, payment gateway, PSP, cards, wallets, merchant payments |
+
+When two CVs fit about equally (for example an AI product role focused on retention), the agent parks the job with a CV question and doesn't guess. The chosen CV and the signals behind the choice are shown in review.
 
 ### 5.4 Duplicates
 
@@ -351,6 +362,7 @@ These always become open questions unless Sourav has set a standing answer for t
 | Date | Converted to the field's format |
 | File upload | CV from the library. Cover letter only per the cover letter policy (open question D3) |
 | Long text | Drafted or reused (7.2) |
+| Experience section pre-filled from the CV | Workday and some other portals read the uploaded CV and fill an experience and education section themselves. The agent checks each entry against the profile (company, title, dates) and corrects only what the portal parsed wrongly |
 | Unknown widget | The job is parked as `failed` with a screenshot reference, so the adapter can be extended |
 
 ## 8. Pauses, resume and review
@@ -519,7 +531,7 @@ Proposed groups and fields. Sourav fills these once (open question C3), and open
 
 ### 11.2 CV library
 
-Each CV has a name, the role types it's for, the file in Supabase Storage, the local file name in `~/job-applier/cvs`, whether it's the default, and whether it's active. The role types come from Sourav (open question C1). Examples of what a tag could be: "AI PM", "B2B SaaS PM", "Tax and fintech PM", "Senior PM, platform".
+Each CV has a name, the role types it's for, the file in Supabase Storage, the local file name in `~/job-applier/cvs`, whether it's the default, and whether it's active. The role types come from Sourav (open question C1). The four CVs and their selection rules are in 5.3. Experience and education in the profile are extracted from the General consumer CV and reviewed by Sourav.
 
 ### 11.3 Answer bank
 
@@ -716,12 +728,12 @@ Claude in Chrome is documented to fill forms, upload local files and use existin
 
 | # | Input | What's needed |
 |---|---|---|
-| C1 | CVs and role types | Each CV file, and the role types it should be used for. Rule for jobs that fit none: park, or use a default CV? |
+| C1 | CV files | The four CV types and rules are settled (5.3). Still needed: the four files, put in `~/job-applier/cvs` |
 | C2 | Question types | Confirm or change the taxonomy in 11.4. Then, for each behavioural and motivation type, either an answer you're happy with or the story it should be built on (situation, what you did, result) |
-| C3 | Profile facts | Fill the fields in 11.1. Where a field has more than one honest answer (for example notice period with and without buyout), give both and say which to use by default |
+| C3 | Profile facts | Contact, location, notice period and compensation are in a local draft (`~/job-applier/profile.draft.json`). Experience and education will be extracted from the CV for Sourav to review. Still open: the rest of 11.1 (relocation, work mode, links) |
 | C4 | Discovery filters | Locations (Bangalore only, anywhere in India, remote outside India), work mode, title exclusions, company size or stage limits if any |
 | C5 | Dream company list | Company names, in priority order if possible. Careers page URL where you know it. I'll detect the ATS |
-| C6 | Standing answers for sensitive fields | For each row in 7.3 except identity documents: a standing answer, or "always ask me". For compensation, also how to state current pay if it isn't a standard CTC (for example a contractor fee), so the number is stated the same way every time |
+| C6 | Standing answers for sensitive fields | Compensation is settled: current pay is a standing answer, expected pay is asked on every application with two one-tap options. Still needed for the other rows in 7.3 except identity documents: a standing answer, or "always ask me" |
 | C7 | Answers you've already written | Any past applications, cover letters or interview prep notes. They seed the answer bank faster than starting from blank |
 
 ### Decisions
@@ -739,5 +751,4 @@ Claude in Chrome is documented to fill forms, upload local files and use existin
 | D9 | Fit note on discovered jobs | None, keyword match against CV tags, or an AI-written note (needs an AI API key with its own usage cost) | Keyword match in M6. AI note later if the inbox gets too long to scan |
 | D10 | Soft limit on open application tabs | 25, another number, or none | 25 to start. Check memory use on your MacBook in M0 |
 | D11 | Do submitted drafts go into the answer bank automatically? | Yes if submitted unchanged, or only after you approve each one in the dashboard | Yes if unchanged. Otherwise the answer bank only grows when you remember to approve |
-| D12 | Daily cap on LinkedIn applications | No cap, or a cap (for example 20 a day) with the rest carried to the next run | A cap. It reduces account risk, and the whole list still gets done over a few runs |
 | D13 | Import your past LinkedIn applications into the tracker on the first run | None, last 30 days, last 90 days, or all | Last 90 days, so the tracker starts with your current pipeline |

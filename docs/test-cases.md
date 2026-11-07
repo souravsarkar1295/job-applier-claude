@@ -38,7 +38,13 @@ The job lifecycle is also checked by script. `python3 scripts/check_lifecycle.py
 | T23 | Three unknown questions across three pages | All three created as found. Job stays `parked_info` until all are answered | 8.1 | Gap, fixed in v0.3: multiple questions per job unspecified | M4 |
 | T24 | Unknown widget type | `failed` with screenshot. Retried on two more runs, then waits for Sourav | 7.4, 4 | Gap, fixed in v0.3: retries were unlimited | M3 |
 | T25 | LinkedIn shows a security checkpoint mid-run | Run stops at once, nothing else touched, high-priority push | 5.1 | Gap, fixed in v0.3: no account-safety stop existed | M0 (G14) |
-| T26 | Daily cap reached with 8 jobs left | Remaining jobs stay `queued` for the next run | 5.1, D12 | Gap, fixed in v0.3 | M3 |
+| T26 | Daily cap of 20 reached with 8 jobs left | Remaining jobs stay `queued` until the next day | 5.1 | Gap, fixed in v0.3 | M3 |
+| T56 | Second run on the same day after 15 applications in the morning | Fills 5 more, then stops at the cap | 5.1 | Added in v0.3.1 | M3 |
+| T57 | JD focused on retention and conversion for a consumer app | Growth CV chosen, with the signals shown in review | 5.3 | Added in v0.3.1 | M3 |
+| T58 | AI product role focused on retention | AI and Growth fit about equally, so the job parks with a CV question | 5.3 | Added in v0.3.1 | M3 |
+| T59 | JD mentions AI once in passing, otherwise general consumer | General consumer CV, not AI | 5.3 | Added in v0.3.1 | M3 |
+| T60 | Form asks for expected CTC | Open question every time, with two one-tap options | 7.3, C6 | Added in v0.3.1 | M3 |
+| T61 | Workday pre-fills the experience section with a wrong end date | Agent corrects that entry only | 7.4 | Added in v0.3.1 | M3 |
 
 ## Pauses and resume
 
@@ -91,4 +97,4 @@ The job lifecycle is also checked by script. `python3 scripts/check_lifecycle.py
 
 ## Summary
 
-55 cases. 25 were covered by v0.2. 30 showed a gap, and all 30 are fixed in v0.3. The cases that can only be settled by running them, rather than on paper, are the capability gate checks in spec section 18.
+61 cases. Of the first 55, 25 were covered by v0.2 and 30 showed a gap, all fixed in v0.3. T56 to T61 were added in v0.3.1 for the CV rules, daily cap and compensation answers. The cases that can only be settled by running them, rather than on paper, are the capability gate checks in spec section 18.

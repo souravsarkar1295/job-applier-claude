@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Owner | Sourav Sarkar |
-| Status | Draft v0.1, for review |
+| Status | Draft v0.2, for review. v0.2 keeps filled forms open in their tabs, adds recovery and submission handling, and makes M0 a capability gate |
 | Last updated | 7 November 2026 |
 | Repo | `souravsarkar1295/job-applier-claude` (private) |
 
@@ -33,6 +33,7 @@ Auto-submit, applying without Sourav's laptop and Chrome, online assessments and
 | Unknown answers | Flagged and left open, never guessed |
 | Pauses | Go to the dashboard. Notified on the dashboard and by phone push. No email |
 | Batch behaviour | A run processes the whole saved list. Parked jobs don't stop the run |
+| Tab policy | A filled form stays open in its tab until it is submitted. Refilling from stored values is only for recovery |
 | Dashboard | Interactive web app, not a spreadsheet. Tracker plus review queue |
 | Hosting | Self-hosted: Next.js on Vercel, Supabase (Postgres, Auth, Storage) |
 | Code | Private GitHub repo. Personal data is never committed |
@@ -90,12 +91,16 @@ Every job has one status at a time. Statuses are grouped into stages so the pipe
 | Intake | `discovered` | Found by discovery, not yet shortlisted (dream-company flow only) | Discovery job |
 | Intake | `queued` | Saved on LinkedIn or shortlisted, waiting for a run | Agent sync, or Sourav shortlisting |
 | Intake | `skipped` | Closed, duplicate, or dismissed | Agent or Sourav |
-| Filling | `filling` | Agent is working on it now | Agent |
+| Filling | `filling` | Agent is working on it now. Holds a lease renewed on every field write | Agent |
+| Filling | `interrupted` | Was `filling` when the lease expired (session ended, laptop slept, extension disconnected). Resumed first on the next run | API, when the lease lapses |
 | Filling | `parked_info` | Waiting on an answer Sourav can give from anywhere | Agent |
 | Filling | `parked_action` | Waiting on something only Sourav can do in Chrome (sign-in, OTP, CAPTCHA, assessment) | Agent |
 | Filling | `failed` | Agent could not continue for a technical reason, with the error recorded | Agent |
-| Review | `ready_for_review` | Filled to the final page, stopped before submit | Agent |
-| Applied | `submitted` | Sourav submitted | Sourav, or agent reconciliation |
+| Review | `ready_for_review` | Filled to the final page in an open tab, stopped before submit | Agent |
+| Review | `needs_refill` | The review tab was lost or the portal dropped its state. Must be filled again before it can be submitted | Agent or API |
+| Review | `submit_unconfirmed` | The form is no longer on screen and there's no proof either way that it was submitted. Never refilled until Sourav answers | Agent |
+| Review | `expired` | The posting closed before submission | Agent |
+| Applied | `submitted` | Submission confirmed | Sourav, or the agent seeing a confirmation page or LinkedIn's applied list |
 | Outcome | `screening`, `interviewing`, `offer`, `rejected`, `withdrawn`, `no_response` | After submission | Sourav |
 
 ```mermaid
@@ -109,12 +114,19 @@ stateDiagram-v2
   filling --> parked_info: unknown answer
   filling --> parked_action: needs Sourav in Chrome
   filling --> failed: technical error
+  filling --> interrupted: lease expired
   filling --> ready_for_review: final page reached
-  parked_info --> filling: answer given, next resume
-  parked_action --> filling: Sourav done, next resume
+  interrupted --> filling: next run
+  parked_info --> filling: answer given
+  parked_action --> filling: Sourav done
   failed --> filling: retry
-  ready_for_review --> filling: re-fill after edits
-  ready_for_review --> submitted
+  ready_for_review --> submitted: confirmed
+  ready_for_review --> needs_refill: tab or state lost
+  ready_for_review --> submit_unconfirmed: form gone, no confirmation
+  ready_for_review --> expired: posting closed
+  needs_refill --> filling: refill
+  submit_unconfirmed --> submitted: Sourav says yes
+  submit_unconfirmed --> needs_refill: Sourav says no
   submitted --> screening
   submitted --> rejected
   submitted --> no_response
@@ -147,7 +159,7 @@ flowchart TD
   G -- unknown answer --> I[parked_info, notify]
   G -- needs Sourav in Chrome --> J[parked_action, notify]
   G -- error --> K[failed, log]
-  H --> P[Close tab, pause before next job]
+  H --> P[Leave tab open in the run's tab group, pause before next job]
   I --> P
   J --> P
   K --> P
@@ -161,11 +173,11 @@ flowchart TD
 | Sync | Read every job on the LinkedIn saved jobs page | New jobs are created as `queued` with the LinkedIn job ID, URL, company, title, location and a snapshot of the job description. The snapshot matters because postings get edited or taken down |
 | Reconcile | Read LinkedIn's applied list | Any job there that the dashboard doesn't show as `submitted` is marked submitted with today's date. To be confirmed in the dry run that My Jobs separates saved and applied |
 | Triage | Decide whether and how to apply | Check the posting still accepts applications (otherwise `skipped`). Detect apply type: Easy Apply, or external and which ATS. Check for duplicates (5.4). Choose the CV (5.3) |
-| Fill | Work through every page of the form | Each field is resolved by the engine in section 7 and its value is written to the database as soon as it's entered |
+| Fill | Work through every page of the form | Each field is resolved by the engine in section 7 and its value is written to the database as soon as it's entered. Each write also renews the job's lease (section 8.6) |
 | Stop | Never click submit | On the final review page the job moves to `ready_for_review` |
 | Pacing | Wait between jobs | A randomised gap of 60 to 180 seconds between applications, so activity on LinkedIn doesn't arrive in a burst. Configurable |
-| Tab policy | Close the tab after each job | Every value is stored, so closing tabs costs nothing. The tab is reopened and re-filled when Sourav reviews it or answers its question (section 8) |
-| Resume pass | Revisit parked jobs before ending | Any `parked_info` job whose open questions were all answered during the run is resumed |
+| Tab policy | Keep the tab open | Every tab that holds a filled or part-filled form stays open in a Chrome tab group named after the run, and its URL and title are stored on the job. The open tab is the working copy. Stored values are the record and the recovery path, not the normal path (section 8.2) |
+| Resume pass | Revisit parked jobs before ending | Any `parked_info` job whose open questions were all answered during the run is resumed in its existing tab |
 | Summary | One notification at the end | Counts by outcome, with links |
 
 ### 5.2 External apply
@@ -270,11 +282,13 @@ These always become open questions unless Sourav has set a standing answer for t
 
 When a required field is unknown, the form usually won't move to the next page, so the job parks at that page. When an optional field is unknown, the agent leaves it blank, records the open question and keeps going. The application can still reach `ready_for_review`, with the open item listed in review.
 
-### 8.2 Progress lives in the database, not the browser
+### 8.2 The open tab is the working copy
 
-Every value is written to the database the moment it is entered, together with the page reached. Portals handle drafts differently (Workday keeps drafts, a Greenhouse form is lost when its tab closes, and LinkedIn Easy Apply draft behaviour is not yet confirmed), so the design doesn't depend on any of them.
+A filled form stays in its tab until it is submitted, expired or skipped. Sourav reviews and submits in that tab. The database holds a record of every value entered, the page reached and the tab's URL and title, but refilling from that record is a recovery path, not the normal one.
 
-Resuming a job means opening the application again and replaying the stored values page by page, adding new answers, until the agent reaches the point where it stopped. If the portal kept the draft, the replay just confirms the values already there. If a question on the form changed since the last attempt, the changed field is treated as new.
+Refilling has real limits. Some portals don't keep drafts. Some show different questions depending on earlier answers. Some ask for sign-in again when a form is reopened. So a refill is treated as a fresh fill that uses the stored values as answers: every field still goes through the resolution engine in section 7, a question that is new or worded differently is resolved like any other, and the review screen marks every field that changed since the last fill. A refill never runs on a job that might already be submitted (section 8.5).
+
+A new Claude session can't reuse tab references from an earlier session. At the start of every run the agent lists the open tabs and matches them to jobs by stored URL and title. Each matched tab gets a drift check: the agent reads the values on screen and compares them with the stored ones. If they match, the job carries on. If Sourav changed something in the tab, the change is recorded (8.4). If the form has been reset or emptied, the job moves to `needs_refill`.
 
 ### 8.3 Answering an open question
 
@@ -290,18 +304,43 @@ Answering a question that blocks several jobs clears it for all of them.
 
 ### 8.4 Review and submit
 
-The review screen shows the job description summary, the CV used and why, and every field grouped by page, each tagged with its source. Drafted answers are highlighted, and any optional open fields are listed at the top.
+The review screen shows the job description summary, the CV used and why, and every field grouped by page with its source. Drafted answers and fields changed since the last fill are highlighted, and any optional open fields are listed at the top. The screen also names the tab to go to: its tab group and title. A web page can't bring a Chrome tab to the front, so Sourav switches to it himself.
 
-How Sourav changes an answer before submitting is still open (open question D1). The two options are below.
+1. **Read in the dashboard.** Sourav checks the answers and their sources, on his phone or laptop.
+2. **Edit.** One-off changes are made directly in the tab. Changes that should be reused next time are made in the dashboard, and the agent writes them into the open tab on its next pass. It updates only those fields, without refilling the form. A dashboard edit reaches the tab only when the agent runs, so to submit right away, Sourav edits in the tab and uses step 3 to capture the change.
+3. **Pre-submit check (optional, needs a session).** Sourav asks in chat ("check the Acme application"). The agent reads every value in the tab, records any edits Sourav made there, confirms no required field is blank and that the CV is attached, and reports back. This is the only way edits made in the tab reach the answer bank, because a portal stops showing the values once the form is submitted.
+4. **Submit.** Sourav clicks submit in the tab. The agent never does.
+5. **Confirm.** Sourav taps "Submitted" on the job in the dashboard, from any device. If he forgets, the next run catches it (8.5).
 
-| Option | How it works | Trade-off |
+### 8.5 Failure handling
+
+| Scenario | How it's detected | What happens |
 |---|---|---|
-| Edit in the portal | Sourav clicks "Open to submit". The agent reopens the application and replays the values, and Sourav edits directly in the tab and submits. On the next run the agent reads the submitted values back into the database | Fewest steps. But changes only reach the answer bank if the read-back works, which depends on the portal showing submitted answers |
-| Edit in the dashboard | Sourav edits in the review screen, then clicks "Open to submit". The agent replays the edited values and Sourav submits | Every change lands in the answer bank reliably. One more step, and the agent has to be running to open the tab |
+| Tab closed or Chrome restarted before submit | No open tab matches the job at the next run | `needs_refill`, Sourav notified. Refilled in the next run with changed fields marked |
+| Chrome discarded a background tab and reloaded it empty | Drift check finds empty or reset fields | `needs_refill`. Prevented in most cases by the Memory Saver setting in 8.7 |
+| Portal session expired, sign-in needed on reopen | Sign-in page detected | `parked_action`, "needs you at laptop" |
+| Questions changed on refill | Field labels or options differ from the stored ones | Resolved normally. Every changed field is flagged in review |
+| Posting closed before submit | "No longer accepting applications" text, a 404, or the apply button gone | `expired`, Sourav notified, tab closed |
+| Sourav submitted but didn't tap "Submitted" | Tab shows a confirmation page, or the job is on LinkedIn's applied list | `submitted`, with the confirmation text and the time detected stored as proof |
+| Form gone, no confirmation either way | Tab closed or navigated away, nothing in the applied list (common for external portals) | `submit_unconfirmed`. The dashboard asks "Did you submit this?" with one-tap Yes or No. Yes sets `submitted`, No sets `needs_refill`. It is never refilled while unconfirmed |
+| Risk of applying twice | Before any refill the agent checks for an applied badge on LinkedIn or a portal message such as "You have already applied" | If found, `submitted`. No refill |
+| Portal shows an error after Sourav clicks submit | Error text in the tab at the next sweep | Stays in review with the error noted, Sourav notified |
+| Dashboard API unreachable during a run | Write fails after three retries with backoff | The agent finishes the job it's on, since the tab holds the form, and logs to `~/job-applier/journal/{run_id}.jsonl`. It doesn't start a new job until the API is back. If the API stays down, the run stops, the agent reports in chat, and the journal is imported at the start of the next run |
 
-Either way, "Open to submit" needs a Claude session, because only the agent can replay values into Chrome. Sourav can also just open the job link himself and fill it by hand, using the review screen as a reference.
+### 8.6 Run interruptions
 
-After Sourav submits, he marks the job submitted in the dashboard. If he forgets, reconciliation on the next run picks it up for LinkedIn applications. For external portals there is no applied list to check, so those depend on him marking them.
+A run can stop partway through. Claude's usage limit can be reached, the laptop can sleep, the Chrome extension can disconnect, or the chat can be closed. The design assumes this will happen.
+
+A job in `filling` holds a lease that expires 15 minutes after its last field write. If the lease runs out, the API moves the job to `interrupted`. Every run starts with interrupted jobs: it finds the tab, does a drift check and continues from the last page reached. Jobs already parked, ready or submitted aren't touched. If a browser action fails three times in a row, the agent stops the run and reports in chat instead of retrying indefinitely.
+
+### 8.7 Tab housekeeping
+
+| Rule | Detail |
+|---|---|
+| One tab group per run | Named `JA` plus the run date, so application tabs are separate from Sourav's own browsing |
+| When a tab is closed | Only when its job is submitted, expired or skipped, or when Sourav closes it himself |
+| Soft limit | Default 25 open application tabs. Above it the run keeps going, as decided, but the summary warns. Many open portal tabs use a lot of memory on a laptop (open question D10) |
+| Chrome Memory Saver | Chrome can discard inactive tabs to save memory, and a discarded tab reloads empty. Setup step: under Settings, Performance, add linkedin.com and the portal domains (myworkdayjobs.com, greenhouse.io, lever.co, ashbyhq.com) to "Always keep these sites active", or turn Memory Saver off |
 
 ## 9. Notifications
 
@@ -310,6 +349,10 @@ After Sourav submits, he marks the job submitted in the dashboard. If he forgets
 | Job ready for review | Yes | Yes | One per job |
 | Job parked for information | Yes | Yes | One per job, listing all its open questions |
 | Job parked for an action in Chrome | Yes | Yes, marked "needs you at laptop" | One per job |
+| Job needs refill (form lost before submit) | Yes | Yes | One per job |
+| Did you submit this? | Yes | Yes | One per job, repeated in a weekly digest until answered |
+| Posting expired before submit | Yes | No | Included in run summary |
+| Run interrupted | Yes | Yes | One per run, listing the jobs left `interrupted` |
 | Job failed | Yes | No | Included in run summary |
 | Run finished | Yes | Yes | One per run, with counts |
 | New dream-company matches | Yes | Yes | One per discovery run, only when there are new matches |
@@ -424,10 +467,10 @@ Postgres in Supabase. All tables have `id`, `created_at` and `updated_at`, and r
 | `profile_facts` | Profile values | `key`, `group`, `value` (jsonb), `is_sensitive`, `last_used_at` |
 | `cvs` | CV library | `name`, `role_tags` (text[]), `storage_path`, `local_filename`, `is_default`, `active` |
 | `companies` | Dream-company watchlist and every company seen | `name`, `ats`, `board_id`, `careers_url`, `watch` (bool), `last_checked_at` |
-| `jobs` | One row per opening | `source` (linkedin, discovery), `linkedin_job_id`, `ats_job_id`, `company_id`, `title`, `normalized_title`, `location`, `work_mode`, `posting_url`, `apply_url`, `ats`, `apply_type`, `jd_text`, `jd_captured_at`, `status`, `duplicate_of`, `cv_id`, `cv_reason`, `submitted_at`, `notes` |
+| `jobs` | One row per opening | `source` (linkedin, discovery), `linkedin_job_id`, `ats_job_id`, `company_id`, `title`, `normalized_title`, `location`, `work_mode`, `posting_url`, `apply_url`, `ats`, `apply_type`, `jd_text`, `jd_captured_at`, `status`, `duplicate_of`, `cv_id`, `cv_reason`, `tab_url`, `tab_title`, `tab_group`, `lease_expires_at`, `last_page`, `submitted_at`, `submitted_source` (sourav, confirmation_page, linkedin_applied), `confirmation_text`, `notes` |
 | `job_events` | Status history | `job_id`, `from_status`, `to_status`, `actor` (agent, sourav, discovery), `note` |
 | `attempts` | One row per agent pass over a job | `job_id`, `run_id`, `started_at`, `ended_at`, `outcome`, `last_page`, `error`, `screenshot_ref` |
-| `fields` | Every form field seen, with its value | `job_id`, `page_index`, `label`, `normalized_label`, `field_type`, `options` (jsonb), `required`, `value`, `source`, `answer_id`, `question_type`, `confidence`, `approved` |
+| `fields` | Every form field seen, with its value | `job_id`, `page_index`, `label`, `normalized_label`, `field_type`, `options` (jsonb), `required`, `value`, `source`, `answer_id`, `question_type`, `confidence`, `approved`, `changed_since_last_fill`, `tab_value_at_check`, `pending_push_to_tab` |
 | `open_questions` | Questions waiting for Sourav | `text`, `normalized_text`, `field_type`, `options`, `question_type`, `suggested_answer`, `status` (open, answered, dismissed), `answer`, `scope` |
 | `open_question_jobs` | Which jobs and fields each question blocks | `open_question_id`, `job_id`, `field_id` |
 | `answers` | Answer bank | `question_type`, `canonical_question`, `answer_text`, `is_standing`, `company_specific`, `source_job_id`, `used_count`, `retired` |
@@ -446,8 +489,12 @@ The agent calls these endpoints on the dashboard app with its agent key. Busines
 | `GET /api/agent/queue` | Jobs to process this run, in order: queued, then retryable failed, then parked jobs with all questions answered |
 | `POST /api/agent/jobs/sync` | Upsert jobs read from LinkedIn saved jobs, and mark reconciled submissions |
 | `PATCH /api/agent/jobs/{id}` | Status changes and triage results (ATS, apply type, CV choice) |
-| `PUT /api/agent/jobs/{id}/fields` | Write field values as they're entered |
-| `GET /api/agent/jobs/{id}/replay` | Stored values for a resume, by page |
+| `PUT /api/agent/jobs/{id}/fields` | Write field values as they're entered. Also renews the job's lease |
+| `GET /api/agent/jobs/{id}/stored-values` | Stored values by page, for drift checks and refills |
+| `GET /api/agent/tabs/expected` | Every job that should have an open tab, with URL, title and status |
+| `POST /api/agent/tabs/sweep` | Results of the start-of-run tab sweep: matched, missing, confirmation found, form reset, error shown |
+| `GET /api/agent/edits/pending` | Dashboard edits waiting to be written into open tabs |
+| `POST /api/agent/journal/import` | Import a run journal written while the API was unreachable |
 | `POST /api/agent/resolve` | Given a question, its type and options, return a profile value, standing answer or answer-bank match with confidence, or nothing |
 | `GET /api/agent/context` | Profile, CV list with tags, approved answers, settings, for the start of a run |
 | `POST /api/agent/open-questions` | Create open questions and link them to jobs |
@@ -505,9 +552,13 @@ The dashboard holds Sourav's phone number, address, compensation and every answe
 | LinkedIn restricts the account for automated activity | Medium | High: this is the profile used for the job search | Runs only in Sourav's own browser, at a human pace with randomised gaps, no searching or saving, no messaging. Sourav accepts the residual risk |
 | A wrong answer reaches a recruiter | Medium | High | Never auto-submit. Sources shown per field. Drafts must be approved. Sensitive fields always asked |
 | Invented experience in a drafted answer | Low | High | Drafting rules in 7.2. Every draft reviewed |
+| A filled form is lost before submit (tab closed, tab discarded, portal timeout) | Medium | Medium | Tabs stay open, Memory Saver exclusions, drift checks, `needs_refill` with changed fields marked (8.2, 8.5, 8.7) |
+| A run stops partway through | High | Low | Leases, `interrupted` status, resume from the last page (8.6) |
+| An application is submitted twice | Low | High | No refill while `submit_unconfirmed`, applied-signal check before any refill (8.5) |
+| Submission happens but the dashboard isn't updated | Medium | Low | Confirmation-page and applied-list detection, one-tap "Did you submit?" (8.5) |
 | Portal layout changes break filling | High over time | Medium | Per-ATS adapters, `failed` status with screenshots, retries |
 | Workday endpoint changes | Medium | Low | Discovery for that company fails visibly in the Runs view, and the other boards keep working |
-| Session can't reach Vercel or Supabase | Unknown | High for the agent | To be checked first (V4). Fallback: the agent calls the API from the shell on Sourav's Mac |
+| Session can't reach Vercel or Supabase | Unknown | High for the agent | To be checked first (G4). Fallback: the agent calls the API from the shell on Sourav's Mac |
 | Web push unreliable on iPhone | Medium | Medium | Fallback to Claude push and ntfy (9.1) |
 | Free Supabase project pauses after inactivity | Low with daily discovery | Low | Discovery keeps it active. One-click restore |
 
@@ -515,25 +566,33 @@ The dashboard holds Sourav's phone number, address, compensation and every answe
 
 | Milestone | Scope | Done when |
 |---|---|---|
-| M0. Dry run | One LinkedIn Easy Apply job and one external portal job, filled by hand-run agent steps, stopped before submit, results in a JSON file. No dashboard | Both reach the final page, and the checks in section 18 are answered |
+| M0. Capability gate | The checks in section 18, on real jobs, with results in a JSON file and no dashboard | Every must-pass check passes, or its fallback is chosen and the spec updated. Nothing after M0 starts until then |
 | M1. Foundations | Next.js scaffold, Supabase schema and migrations, sign-in, agent API skeleton, Vercel deploy | Sourav can sign in on phone and laptop, and the agent can create a run through the API |
 | M2. Knowledge base | Profile, CVs and Answer bank screens. Sourav enters his data | Profile complete, CVs uploaded and tagged, first answers entered |
 | M3. LinkedIn flow | Sync, triage, fill, stop, review queue, mark submitted, reconcile | A real run takes saved jobs to `ready_for_review` and Sourav submits from the review screen |
-| M4. Pauses and resume | Open questions, scopes, replay, resume pass | A parked job resumes and completes after Sourav answers from his phone |
+| M4. Pauses, resume and recovery | Open questions, scopes, tab sweep and drift check, leases, refill with change marking, "Did you submit?" flow, run journal | A parked job resumes in its tab after Sourav answers from his phone, and an interrupted run continues correctly in a new session |
 | M5. Notifications | Inbox, web push, run summaries | Push arrives on Sourav's phone and laptop for each event in section 9 |
 | M6. Dream companies | Companies view, adapters, discovery job, Discovered view, shortlist into queue | Daily discovery finds matches, and a shortlisted job is applied to through the same flow |
 | M7. Tracker | Outcome stages, `no_response` automation, notes, follow-ups | Every submitted application has a stage, and stale ones are flagged |
 
-## 18. To verify in the dry run
+## 18. Capability gate
 
-| # | Question | Why it matters |
-|---|---|---|
-| V1 | Does LinkedIn My Jobs show saved and applied jobs as separate lists the agent can read? | Reconciliation (5.1) |
-| V2 | Does LinkedIn keep a half-filled Easy Apply when the modal closes? | Replay cost (8.2) |
-| V3 | Can Claude in Chrome upload a CV from `~/job-applier/cvs`, and which path form does it need? | Every application needs it |
-| V4 | Can the Claude session reach the Vercel app and Supabase through its network allowlist? | The agent API depends on it |
-| V5 | Does push reach both phone and laptop, and does it arrive when the session is idle? | Notifications (9) |
-| V6 | Does the Workday endpoint work for the first Workday companies on the watchlist? | Discovery (6.2) |
+Claude in Chrome is documented to fill forms, upload local files and use existing browser sessions. That covers single steps. It doesn't show that the full orchestration (Chrome, files on the Mac and the cloud API, across many jobs and more than one session) holds up. M0 tests exactly that, before any dashboard code is written.
+
+| # | Check | How it's tested | Must pass | Fallback if it fails |
+|---|---|---|---|---|
+| G1 | Read the full LinkedIn saved jobs list, including pagination | Saved list of 10 or more jobs | Yes | Sourav pastes job links into the dashboard instead |
+| G2 | Fill a multi-page Easy Apply form with text, selects, radios and checkboxes | Two real Easy Apply jobs, stopped before submit | Yes | None. Without this the LinkedIn flow doesn't work |
+| G3 | Upload a CV from `~/job-applier/cvs` | Same two jobs plus one external portal | Yes | CV pre-attached in the LinkedIn profile. Portals that need a file become `parked_action` |
+| G4 | The session reaches the Vercel app and Supabase | A test endpoint called from the session | Yes | API calls go through the shell on Sourav's Mac |
+| G5 | One session runs 5 or more jobs end to end (Chrome, local files, API) without unplanned stops | A queue of five mixed jobs | Yes | Smaller runs. Find out which step breaks and redesign it |
+| G6 | A new session finds tabs left by an earlier session and reads their form values | End a session with two filled tabs, start a new one | Yes | Treat every new session as `needs_refill` for open jobs. Slower, but correct |
+| G7 | Recovery after a run is cut off mid-fill | Stop a session halfway through a form | Yes | Manual restart of the job from scratch |
+| G8 | Detect a submission confirmation on LinkedIn and on one ATS | Sourav submits one real application of each kind | No | Sourav taps "Submitted" himself |
+| G9 | A filled tab survives two hours in the background | Leave a filled form untouched with Memory Saver exclusions on | No | Lower the soft tab limit and review sooner |
+| G10 | Push reaches phone and laptop, including when the session is idle | Test notification | No | Fallback channel in 9.1 |
+| G11 | Whether LinkedIn keeps a half-filled Easy Apply after the modal closes | Close the modal mid-form and reopen | No | Treat as `needs_refill` |
+| G12 | The Workday discovery endpoint works for the first Workday companies on the watchlist | Run the adapter against them | No | Page scraping for those companies |
 
 ## 19. Open questions
 
@@ -553,7 +612,7 @@ The dashboard holds Sourav's phone number, address, compensation and every answe
 
 | # | Decision | Options | Recommendation |
 |---|---|---|---|
-| D1 | Where Sourav edits answers before submitting | Edit in the portal tab, or edit in the dashboard and then the agent replays them (8.4) | Dashboard. It's the only way every change reliably reaches the answer bank |
+| D1 | Where Sourav edits answers before submitting | Edit in the tab, edit in the dashboard (written into the tab on the agent's next pass), or both (8.4) | Both. One-off fixes in the tab. Anything to reuse goes in the dashboard, or gets captured by a pre-submit check |
 | D2 | Pacing between applications | 60 to 180 seconds, or another range | 60 to 180 seconds to start, then adjust |
 | D3 | Cover letters | Draft one for every portal that accepts it, only where required, or never | Only where required |
 | D4 | Default for diversity and EEO questions | Answer from profile, or "prefer not to say" everywhere | Your call. It's personal, and some portals require an answer |
@@ -562,3 +621,4 @@ The dashboard holds Sourav's phone number, address, compensation and every answe
 | D7 | When an application counts as `no_response` | 30 days, or another number | 30 days |
 | D8 | Dashboard address | Default `*.vercel.app` subdomain, or a custom domain you own | Default subdomain. Nothing to buy or configure |
 | D9 | Fit note on discovered jobs | None, keyword match against CV tags, or an AI-written note (needs an AI API key with its own usage cost) | Keyword match in M6. AI note later if the inbox gets too long to scan |
+| D10 | Soft limit on open application tabs | 25, another number, or none | 25 to start. Check memory use on your MacBook in M0 |

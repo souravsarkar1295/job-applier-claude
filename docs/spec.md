@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | Owner | Sourav Sarkar |
-| Status | Draft v0.2, for review. v0.2 keeps filled forms open in their tabs, adds recovery and submission handling, and makes M0 a capability gate |
-| Last updated | 7 November 2026 |
+| Status | Draft v0.3, for review. v0.3 closes the gaps found in the flow check (`docs/test-cases.md`) and adds the end-to-end walkthrough and setup checklist |
+| Last updated | 8 November 2026 |
 | Repo | `souravsarkar1295/job-applier-claude` (private) |
 
 ## 1. Problem
@@ -82,6 +82,52 @@ The split that matters: discovery reads public job boards and needs no login, so
 
 The agent never talks to Postgres directly. It calls a small agent API on the dashboard app, authenticated with a dedicated agent key. That keeps the Supabase service key out of Claude sessions and gives one place to validate what the agent writes.
 
+### 3.1 End-to-end walkthrough
+
+A typical cycle, from saving a job to tracking the outcome.
+
+```mermaid
+sequenceDiagram
+  actor S as Sourav
+  participant C as Claude (agent)
+  participant B as Chrome on the Mac
+  participant D as Dashboard and API
+  participant P as Phone
+
+  S->>B: Saves jobs on LinkedIn during the week
+  S->>C: "Process my saved jobs"
+  C->>D: Take run lock, load profile, CVs, answers
+  C->>B: Sweep open tabs, push pending edits, spot submissions
+  C->>B: Read saved and applied lists
+  C->>D: Sync jobs, reconcile submissions
+  loop Each job in the queue
+    C->>B: Triage and fill page by page
+    C->>D: Write every value as it's entered
+    alt Final page reached
+      C->>D: ready_for_review
+      D->>P: Push: ready for review
+    else Unknown answer
+      C->>D: parked_info plus open question
+      D->>P: Push: question waiting
+    else Needs sign-in, OTP or CAPTCHA
+      C->>D: parked_action
+      D->>P: Push: needs you at laptop
+    end
+    C->>C: Wait 60 to 180 seconds
+  end
+  S->>D: Answers questions from the phone, mid-run or later
+  C->>D: Resume pass: fetch answers
+  C->>B: Finish parked jobs in their tabs
+  C->>D: Run summary
+  D->>P: Push: run finished
+  S->>D: Reviews answers and sources
+  S->>B: Fixes anything, clicks submit
+  S->>D: Taps "Submitted"
+  S->>D: Updates stage as replies come in
+```
+
+What Sourav does, in order: save jobs on LinkedIn, ask Claude to start a run, answer questions on his phone as they come in, then sit at the laptop to review and submit what's ready, and update the stage as he hears back. Everything else is the agent's job.
+
 ## 4. Job lifecycle
 
 Every job has one status at a time. Statuses are grouped into stages so the pipeline view stays readable.
@@ -90,52 +136,74 @@ Every job has one status at a time. Statuses are grouped into stages so the pipe
 |---|---|---|---|
 | Intake | `discovered` | Found by discovery, not yet shortlisted (dream-company flow only) | Discovery job |
 | Intake | `queued` | Saved on LinkedIn or shortlisted, waiting for a run | Agent sync, or Sourav shortlisting |
-| Intake | `skipped` | Closed, duplicate, or dismissed | Agent or Sourav |
+| Intake | `skipped` | Not applying: closed before filling, duplicate, unsaved on LinkedIn, dismissed, or Sourav decided against it at any point before submitting. The reason is stored | Agent or Sourav |
 | Filling | `filling` | Agent is working on it now. Holds a lease renewed on every field write | Agent |
 | Filling | `interrupted` | Was `filling` when the lease expired (session ended, laptop slept, extension disconnected). Resumed first on the next run | API, when the lease lapses |
 | Filling | `parked_info` | Waiting on an answer Sourav can give from anywhere | Agent |
 | Filling | `parked_action` | Waiting on something only Sourav can do in Chrome (sign-in, OTP, CAPTCHA, assessment) | Agent |
-| Filling | `failed` | Agent could not continue for a technical reason, with the error recorded | Agent |
+| Filling | `failed` | Agent could not continue for a technical reason, with the error recorded. Retried automatically on the next two runs, then left for Sourav to retry or skip | Agent |
 | Review | `ready_for_review` | Filled to the final page in an open tab, stopped before submit | Agent |
 | Review | `needs_refill` | The review tab was lost or the portal dropped its state. Must be filled again before it can be submitted | Agent or API |
 | Review | `submit_unconfirmed` | The form is no longer on screen and there's no proof either way that it was submitted. Never refilled until Sourav answers | Agent |
-| Review | `expired` | The posting closed before submission | Agent |
+| Review | `expired` | The posting closed after filling started but before submission | Agent |
 | Applied | `submitted` | Submission confirmed | Sourav, or the agent seeing a confirmation page or LinkedIn's applied list |
-| Outcome | `screening`, `interviewing`, `offer`, `rejected`, `withdrawn`, `no_response` | After submission | Sourav |
+| Outcome | `screening`, `interviewing`, `offer`, `rejected`, `withdrawn`, `no_response` | After submission. `withdrawn` means Sourav pulled out. `no_response` is set by the API and changes if the company replies later | Sourav, or the API for `no_response` |
 
 ```mermaid
 stateDiagram-v2
   [*] --> discovered: dream-company flow
   [*] --> queued: LinkedIn sync
   discovered --> queued: shortlisted
-  discovered --> skipped: dismissed
+  discovered --> skipped: dismissed or posting removed
   queued --> filling: run picks it up
-  queued --> skipped: closed or duplicate
+  queued --> skipped: closed, duplicate, unsaved
+  queued --> submitted: already applied outside the tool
   filling --> parked_info: unknown answer
   filling --> parked_action: needs Sourav in Chrome
   filling --> failed: technical error
   filling --> interrupted: lease expired
   filling --> ready_for_review: final page reached
-  interrupted --> filling: next run
-  parked_info --> filling: answer given
+  interrupted --> filling: next run, tab found
+  interrupted --> needs_refill: next run, tab lost
+  parked_info --> filling: all answers given
+  parked_info --> expired: posting closed
+  parked_info --> skipped: Sourav skips
   parked_action --> filling: Sourav done
+  parked_action --> expired: posting closed
+  parked_action --> skipped: Sourav skips
   failed --> filling: retry
+  failed --> skipped: Sourav skips
   ready_for_review --> submitted: confirmed
   ready_for_review --> needs_refill: tab or state lost
   ready_for_review --> submit_unconfirmed: form gone, no confirmation
   ready_for_review --> expired: posting closed
+  ready_for_review --> skipped: Sourav decides not to apply
   needs_refill --> filling: refill
+  needs_refill --> submitted: already-applied signal found
+  needs_refill --> skipped: Sourav skips
   submit_unconfirmed --> submitted: Sourav says yes
   submit_unconfirmed --> needs_refill: Sourav says no
   submitted --> screening
   submitted --> rejected
-  submitted --> no_response
+  submitted --> no_response: no update in 30 days
+  submitted --> withdrawn
+  no_response --> screening: late reply
+  no_response --> rejected: late reply
   screening --> interviewing
+  screening --> rejected
+  screening --> withdrawn
   interviewing --> offer
   interviewing --> rejected
+  interviewing --> withdrawn
+  offer --> withdrawn: declined
   offer --> [*]
   rejected --> [*]
+  withdrawn --> [*]
+  skipped --> [*]
+  expired --> [*]
 ```
+
+Terminal statuses: `skipped`, `expired`, `offer`, `rejected`, `withdrawn`. Sourav can reopen a `skipped` or `expired` job by hand, which puts it back to `queued`. `no_response` is not terminal, because a late reply moves it on.
 
 `no_response` is set automatically when a submitted application has had no update for a set number of days (default 30), so the tracker doesn't fill up with silent applications.
 
@@ -170,19 +238,33 @@ flowchart TD
 
 | Step | What happens | Details |
 |---|---|---|
-| Sync | Read every job on the LinkedIn saved jobs page | New jobs are created as `queued` with the LinkedIn job ID, URL, company, title, location and a snapshot of the job description. The snapshot matters because postings get edited or taken down |
-| Reconcile | Read LinkedIn's applied list | Any job there that the dashboard doesn't show as `submitted` is marked submitted with today's date. To be confirmed in the dry run that My Jobs separates saved and applied |
-| Triage | Decide whether and how to apply | Check the posting still accepts applications (otherwise `skipped`). Detect apply type: Easy Apply, or external and which ATS. Check for duplicates (5.4). Choose the CV (5.3) |
+| Start | Take the run lock, load context, sweep tabs | Only one apply run can be active. The agent loads the profile, CVs, answers and settings, then runs the tab sweep (8.2): matches open tabs to jobs, writes pending dashboard edits into them, and records submissions it can see |
+| Sync | Read every job on the LinkedIn saved jobs page | New jobs are created as `queued` with the LinkedIn job ID, URL, company, title, location and a snapshot of the job description. The snapshot matters because postings get edited or taken down. A `queued` job that is no longer saved becomes `skipped` (reason: unsaved). A job in any later status that is no longer saved is flagged on the dashboard but not changed |
+| Reconcile | Read LinkedIn's applied list | A tracked job that appears there is marked `submitted`. Applied jobs the dashboard has never seen are imported into the tracker as `submitted` on the first run only, limited by open question D13. To be confirmed in M0 that My Jobs separates saved and applied (G1) |
+| Triage | Decide whether and how to apply | Check the posting still accepts applications (otherwise `skipped`). Check for an "Applied" badge on LinkedIn or an already-applied message on the portal (then `submitted`, source: already applied). Detect apply type: Easy Apply, or external and which ATS. Check for duplicates (5.4). Choose the CV (5.3) |
 | Fill | Work through every page of the form | Each field is resolved by the engine in section 7 and its value is written to the database as soon as it's entered. Each write also renews the job's lease (section 8.6) |
 | Stop | Never click submit | On the final review page the job moves to `ready_for_review` |
-| Pacing | Wait between jobs | A randomised gap of 60 to 180 seconds between applications, so activity on LinkedIn doesn't arrive in a burst. Configurable |
+| Pacing | Wait between jobs | A randomised gap of 60 to 180 seconds between applications, so activity on LinkedIn doesn't arrive in a burst. Configurable. An optional daily cap on LinkedIn applications (open question D12) carries the rest of the queue over to the next run |
+| Account safety | Stop on any LinkedIn warning | If LinkedIn signs Sourav out, shows a security checkpoint, or shows any message about unusual or automated activity, the run stops at once, every job stays where it is, and Sourav is notified. No run touches LinkedIn again until he says so in chat |
 | Tab policy | Keep the tab open | Every tab that holds a filled or part-filled form stays open in a Chrome tab group named after the run, and its URL and title are stored on the job. The open tab is the working copy. Stored values are the record and the recovery path, not the normal path (section 8.2) |
-| Resume pass | Revisit parked jobs before ending | Any `parked_info` job whose open questions were all answered during the run is resumed in its existing tab |
+| Resume pass | Revisit parked jobs before ending | Any `parked_info` job whose open questions were all answered during the run, and any `parked_action` job Sourav marked done, is resumed in its existing tab |
 | Summary | One notification at the end | Counts by outcome, with links |
 
 ### 5.2 External apply
 
-When the LinkedIn apply button leads to a company portal, the agent follows it in the same tab, records the portal URL and ATS on the job, and fills it the same way. Portal-specific behaviour lives in per-ATS adapters (section 6.2), because the same field looks different on Workday and on Greenhouse.
+When the LinkedIn apply button leads to a company portal, it usually opens a new tab. That portal tab becomes the job's tab and the LinkedIn tab is closed. The agent records the portal URL and ATS on the job and fills it the same way. Portal-specific behaviour lives in per-ATS adapters (section 6.2), because the same field looks different on Workday and on Greenhouse.
+
+Two cases need extra handling. If the link lands on a general careers page instead of the posting, the agent searches the portal for the job title. If it can't find a confident match, the job becomes `parked_info` with the question "What's the link to this job on the company site?". If the portal needs an account or a sign-in before the form appears, the job becomes `parked_action`.
+
+### 5.2a LinkedIn Easy Apply rules
+
+| Rule | Detail |
+|---|---|
+| Contact details | Easy Apply pre-fills email and phone from the LinkedIn profile. The agent checks them against the profile facts and corrects them if they differ |
+| CV | Easy Apply lists CVs already uploaded to LinkedIn. The agent selects the chosen CV if it's in that list, otherwise uploads it from `~/job-applier/cvs` |
+| Save, never discard | If LinkedIn asks whether to save or discard the application when the form is closed, the agent always saves |
+| Follow company | The "Follow company" box at the end is unticked by default. Configurable in Settings |
+| Submit | The agent stops on the review page and never presses "Submit application" |
 
 ### 5.3 CV selection
 
@@ -201,7 +283,7 @@ The same opening often appears on LinkedIn and on the company's own board. Two j
 3. **Inbox.** New matches appear in the Discovered view as `discovered`, with company, title, location, posted date and a link. A fit note against Sourav's CVs is planned for later (open question D9).
 4. **Shortlist.** Sourav shortlists or dismisses each one. Shortlisted jobs become `queued` and are applied to by the same agent and fill engine as LinkedIn jobs, from their portal URL.
 
-Nothing in the Discovered view is ever applied to without being shortlisted.
+Nothing in the Discovered view is ever applied to without being shortlisted. A `discovered` job whose posting disappears from the board is moved to `skipped` (reason: posting removed) on the next discovery run, so the inbox doesn't fill with dead links.
 
 ### 6.2 Board adapters
 
@@ -256,6 +338,7 @@ These always become open questions unless Sourav has set a standing answer for t
 | Diversity and EEO | Gender, disability, veteran status, ethnicity |
 | Legal and consent | Background check consent, non-compete, data processing consent |
 | Prior relationship | Previously employed or interviewed here, relatives at the company |
+| Identity documents and personal details | PAN, Aadhaar, passport or other ID numbers, date of birth, father's name. Never stored in the profile. Always asked per application |
 
 ### 7.4 Field types
 
@@ -277,10 +360,12 @@ These always become open questions unless Sourav has set a standing answer for t
 | Type | Status | Examples | Resolved where | Notification |
 |---|---|---|---|---|
 | Missing information | `parked_info` | Screening question never seen before, a dropdown with no matching option, a sensitive field without a standing answer, an unclear CV choice | Dashboard, from phone or laptop | Push plus dashboard |
-| Action only Sourav can do | `parked_action` | Portal sign-in, account creation, email OTP, CAPTCHA, online assessment | Chrome on the Mac | Push plus dashboard, marked "needs you at laptop" |
+| Action only Sourav can do | `parked_action` | Portal sign-in, account creation, email OTP, CAPTCHA, online assessment | Chrome on the Mac. Sourav taps "Done" on the job in the dashboard, or the next tab sweep sees the step is finished | Push plus dashboard, marked "needs you at laptop" |
 | Technical failure | `failed` | Page didn't load, unknown widget, unexpected layout | Agent retries on the next run, or the adapter gets fixed | Dashboard only, included in run summary |
 
-When a required field is unknown, the form usually won't move to the next page, so the job parks at that page. When an optional field is unknown, the agent leaves it blank, records the open question and keeps going. The application can still reach `ready_for_review`, with the open item listed in review.
+When a required field is unknown, the form usually won't move to the next page, so the job parks at that page. When an optional field is unknown, the agent leaves it blank, records the open question and keeps going. The application can still reach `ready_for_review`, with the open item listed in review. If Sourav answers that question later, the answer is queued for the tab like any dashboard edit (8.4).
+
+A job can collect several open questions across pages. It stays `parked_info` until all of them are answered. Each one is created the moment it's found, so Sourav can start answering while the run is still going.
 
 ### 8.2 The open tab is the working copy
 
@@ -300,7 +385,9 @@ An open question shows the exact question text, the options if it's a select, th
 | Standing answer | Used for every future occurrence of this question type |
 | Profile fact | Saved to the profile (for example a new notice period) |
 
-Answering a question that blocks several jobs clears it for all of them.
+Answering a question that blocks several jobs clears it for all of them, except with the "This application only" scope, where Sourav picks which of the blocked jobs it applies to.
+
+When Sourav changes a profile fact or a standing answer, every job still in `ready_for_review` that used the old value is listed, and he chooses whether to update those tabs too. Already submitted applications are never touched.
 
 ### 8.4 Review and submit
 
@@ -311,6 +398,12 @@ The review screen shows the job description summary, the CV used and why, and ev
 3. **Pre-submit check (optional, needs a session).** Sourav asks in chat ("check the Acme application"). The agent reads every value in the tab, records any edits Sourav made there, confirms no required field is blank and that the CV is attached, and reports back. This is the only way edits made in the tab reach the answer bank, because a portal stops showing the values once the form is submitted.
 4. **Submit.** Sourav clicks submit in the tab. The agent never does.
 5. **Confirm.** Sourav taps "Submitted" on the job in the dashboard, from any device. If he forgets, the next run catches it (8.5).
+
+Submitting needs the laptop, because the form lives in Chrome on the Mac. The phone is for reading, answering questions and confirming.
+
+Sourav can also tap "Skip" at any point before submitting. The job becomes `skipped`, its tab is closed at the next sweep, and nothing from it goes into the answer bank.
+
+When a job becomes `submitted`, its drafted answers are handled according to open question D11. The proposed rule is that a draft submitted exactly as written counts as approved and goes into the answer bank, and a draft that was edited in the tab counts as approved only if the edit was captured by a pre-submit check.
 
 ### 8.5 Failure handling
 
@@ -331,7 +424,11 @@ The review screen shows the job description summary, the CV used and why, and ev
 
 A run can stop partway through. Claude's usage limit can be reached, the laptop can sleep, the Chrome extension can disconnect, or the chat can be closed. The design assumes this will happen.
 
-A job in `filling` holds a lease that expires 15 minutes after its last field write. If the lease runs out, the API moves the job to `interrupted`. Every run starts with interrupted jobs: it finds the tab, does a drift check and continues from the last page reached. Jobs already parked, ready or submitted aren't touched. If a browser action fails three times in a row, the agent stops the run and reports in chat instead of retrying indefinitely.
+Only one apply run can be active at a time. A run holds a run lock that is renewed with every API call. A second chat that tries to start a run is refused while the lock is live, and the refusal says which run holds it. A lock left by a dead session expires after 15 minutes.
+
+A job in `filling` holds a lease that expires 15 minutes after its last field write. If the lease runs out, the API moves the job to `interrupted`. The check runs whenever the queue is read and every 5 minutes on a schedule. If a slow agent writes to a job after its lease has expired, the API rejects the write, and the agent re-reads the job before carrying on, so two sessions can never fill the same job. Every run starts with interrupted jobs: it finds the tab, does a drift check and continues from the last page reached. Jobs already parked, ready or submitted aren't touched. If a browser action fails three times in a row, the agent stops the run and reports in chat instead of retrying indefinitely.
+
+The Mac has to stay awake for a run to keep going. A run started on battery with the lid closed will stop. The setup checklist (section 17a) covers the sleep setting.
 
 ### 8.7 Tab housekeeping
 
@@ -353,6 +450,8 @@ A job in `filling` holds a lease that expires 15 minutes after its last field wr
 | Did you submit this? | Yes | Yes | One per job, repeated in a weekly digest until answered |
 | Posting expired before submit | Yes | No | Included in run summary |
 | Run interrupted | Yes | Yes | One per run, listing the jobs left `interrupted` |
+| LinkedIn warning, run stopped | Yes | Yes, high priority | One per event |
+| Waiting on Sourav for more than 2 days (review, questions, actions) | Yes | Yes | One daily digest, only when something is waiting |
 | Job failed | Yes | No | Included in run summary |
 | Run finished | Yes | Yes | One per run, with counts |
 | New dream-company matches | Yes | Yes | One per discovery run, only when there are new matches |
@@ -373,8 +472,8 @@ The fallback, if web push turns out unreliable, is Claude's own push notificatio
 | View | Purpose | Main actions |
 |---|---|---|
 | Home | Today at a glance: items needing Sourav, last run, pipeline counts, new matches | Jump to whatever needs attention |
-| Pipeline | Every job as a card grouped by stage. Board and table layouts | Filter by source, company, status, CV, date. Open a job |
-| Review queue | Jobs in `ready_for_review`, oldest first | Approve drafts, edit, open to submit, mark submitted |
+| Pipeline | Every job as a card grouped by stage. Board and table layouts. Jobs no longer saved on LinkedIn are flagged | Filter by source, company, status, CV, date. Open a job |
+| Review queue | Jobs in `ready_for_review`, oldest first, each naming its tab group and tab | Approve drafts, edit (queued for the tab), mark submitted, skip |
 | Open questions | Every unanswered question, grouped by type, with the jobs each one blocks | Answer, choose scope, dismiss |
 | Discovered | Dream-company matches waiting for a decision | Shortlist, dismiss, open posting |
 | Companies | Watchlist with ATS, board identifier, last checked, open matching roles | Add, pause, remove, re-detect ATS |
@@ -388,7 +487,7 @@ The fallback, if web push turns out unreliable, is Claude's own push notificatio
 
 ### 10.2 Job detail
 
-One page per job, used from every view. It shows the header (company, title, location, source, links to LinkedIn and portal, status), the saved job description, the application (CV, every field by page with its source, open questions), the timeline of every status change with timestamps, and notes. From here Sourav can skip the job, retry it, open it to submit, or update its stage.
+One page per job, used from every view. It shows the header (company, title, location, source, links to LinkedIn and portal, status), the saved job description, the application (CV, every field by page with its source, open questions), the timeline of every status change with timestamps, and notes. From here Sourav can skip the job, retry it, mark a Chrome action done, mark it submitted, reopen a skipped or expired job, or update its stage.
 
 ### 10.3 Access
 
@@ -467,14 +566,14 @@ Postgres in Supabase. All tables have `id`, `created_at` and `updated_at`, and r
 | `profile_facts` | Profile values | `key`, `group`, `value` (jsonb), `is_sensitive`, `last_used_at` |
 | `cvs` | CV library | `name`, `role_tags` (text[]), `storage_path`, `local_filename`, `is_default`, `active` |
 | `companies` | Dream-company watchlist and every company seen | `name`, `ats`, `board_id`, `careers_url`, `watch` (bool), `last_checked_at` |
-| `jobs` | One row per opening | `source` (linkedin, discovery), `linkedin_job_id`, `ats_job_id`, `company_id`, `title`, `normalized_title`, `location`, `work_mode`, `posting_url`, `apply_url`, `ats`, `apply_type`, `jd_text`, `jd_captured_at`, `status`, `duplicate_of`, `cv_id`, `cv_reason`, `tab_url`, `tab_title`, `tab_group`, `lease_expires_at`, `last_page`, `submitted_at`, `submitted_source` (sourav, confirmation_page, linkedin_applied), `confirmation_text`, `notes` |
+| `jobs` | One row per opening | `source` (linkedin, discovery), `linkedin_job_id`, `ats_job_id`, `company_id`, `title`, `normalized_title`, `location`, `work_mode`, `posting_url`, `apply_url`, `ats`, `apply_type`, `jd_text`, `jd_captured_at`, `status`, `duplicate_of`, `cv_id`, `cv_reason`, `tab_url`, `tab_title`, `tab_group`, `lease_expires_at`, `last_page`, `submitted_at`, `submitted_source` (sourav, confirmation_page, linkedin_applied, already_applied), `confirmation_text`, `skip_reason`, `still_saved` (bool), `retry_count`, `notes` |
 | `job_events` | Status history | `job_id`, `from_status`, `to_status`, `actor` (agent, sourav, discovery), `note` |
 | `attempts` | One row per agent pass over a job | `job_id`, `run_id`, `started_at`, `ended_at`, `outcome`, `last_page`, `error`, `screenshot_ref` |
 | `fields` | Every form field seen, with its value | `job_id`, `page_index`, `label`, `normalized_label`, `field_type`, `options` (jsonb), `required`, `value`, `source`, `answer_id`, `question_type`, `confidence`, `approved`, `changed_since_last_fill`, `tab_value_at_check`, `pending_push_to_tab` |
 | `open_questions` | Questions waiting for Sourav | `text`, `normalized_text`, `field_type`, `options`, `question_type`, `suggested_answer`, `status` (open, answered, dismissed), `answer`, `scope` |
 | `open_question_jobs` | Which jobs and fields each question blocks | `open_question_id`, `job_id`, `field_id` |
 | `answers` | Answer bank | `question_type`, `canonical_question`, `answer_text`, `is_standing`, `company_specific`, `source_job_id`, `used_count`, `retired` |
-| `runs` | Agent runs and discovery runs | `kind` (apply, discovery), `started_at`, `ended_at`, `counts` (jsonb), `notes` |
+| `runs` | Agent runs and discovery runs | `kind` (apply, discovery), `started_at`, `ended_at`, `lock_expires_at`, `stop_reason`, `counts` (jsonb), `notes` |
 | `notifications` | Inbox and push log | `type`, `job_id`, `title`, `body`, `read_at`, `pushed_at` |
 | `push_subscriptions` | Web push endpoints per device | `endpoint`, `keys` (jsonb), `device_label` |
 | `settings` | Filters, pacing, thresholds | `key`, `value` (jsonb) |
@@ -485,8 +584,8 @@ The agent calls these endpoints on the dashboard app with its agent key. Busines
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /api/agent/runs` and `PATCH /api/agent/runs/{id}` | Start and finish a run, with counts |
-| `GET /api/agent/queue` | Jobs to process this run, in order: queued, then retryable failed, then parked jobs with all questions answered |
+| `POST /api/agent/runs` and `PATCH /api/agent/runs/{id}` | Start a run (takes the run lock, refused if another run holds it), renew the lock, and finish with counts and stop reason |
+| `GET /api/agent/queue` | Jobs to process this run, in order: `interrupted`, `needs_refill`, parked jobs that are ready to resume, `queued` (oldest saved first), then `failed` jobs with retries left |
 | `POST /api/agent/jobs/sync` | Upsert jobs read from LinkedIn saved jobs, and mark reconciled submissions |
 | `PATCH /api/agent/jobs/{id}` | Status changes and triage results (ATS, apply type, CV choice) |
 | `PUT /api/agent/jobs/{id}/fields` | Write field values as they're entered. Also renews the job's lease |
@@ -549,7 +648,7 @@ The dashboard holds Sourav's phone number, address, compensation and every answe
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| LinkedIn restricts the account for automated activity | Medium | High: this is the profile used for the job search | Runs only in Sourav's own browser, at a human pace with randomised gaps, no searching or saving, no messaging. Sourav accepts the residual risk |
+| LinkedIn restricts the account for automated activity | Medium | High: this is the profile used for the job search | Runs only in Sourav's own browser, at a human pace with randomised gaps, an optional daily cap, no searching, saving or messaging, and an immediate stop on any LinkedIn warning (5.1). Sourav accepts the residual risk |
 | A wrong answer reaches a recruiter | Medium | High | Never auto-submit. Sources shown per field. Drafts must be approved. Sensitive fields always asked |
 | Invented experience in a drafted answer | Low | High | Drafting rules in 7.2. Every draft reviewed |
 | A filled form is lost before submit (tab closed, tab discarded, portal timeout) | Medium | Medium | Tabs stay open, Memory Saver exclusions, drift checks, `needs_refill` with changed fields marked (8.2, 8.5, 8.7) |
@@ -575,6 +674,21 @@ The dashboard holds Sourav's phone number, address, compensation and every answe
 | M6. Dream companies | Companies view, adapters, discovery job, Discovered view, shortlist into queue | Daily discovery finds matches, and a shortlisted job is applied to through the same flow |
 | M7. Tracker | Outcome stages, `no_response` automation, notes, follow-ups | Every submitted application has a stage, and stale ones are flagged |
 
+## 17a. Setup checklist
+
+Done once before M0, and checked again before the first real run.
+
+| # | Step | Why |
+|---|---|---|
+| S1 | Claude in Chrome installed and signed in, in the Chrome profile where LinkedIn is signed in | The agent works in that profile |
+| S2 | Memory Saver exclusions for linkedin.com, myworkdayjobs.com, greenhouse.io, lever.co, ashbyhq.com (Settings, Performance) | Stops Chrome emptying filled tabs (8.7) |
+| S3 | Mac on power and set not to sleep while plugged in during runs (System Settings, Battery) | A sleeping Mac stops the run (8.6) |
+| S4 | CVs in `~/job-applier/cvs` with recruiter-friendly names, for example `Sourav_Sarkar_Senior_PM.pdf` | The file name is visible to recruiters |
+| S5 | The same CVs uploaded once to LinkedIn's saved resumes | Easy Apply can pick them without uploading each time (5.2a) |
+| S6 | Profile facts filled, at least identity, location, availability, experience and education | Otherwise almost every job parks on the first run |
+| S7 | Dashboard added to the phone home screen and notifications allowed | Needed for push on iPhone (9.1) |
+| S8 | Chrome sign-ins saved for portals you already have accounts on (Workday tenants and others) | Fewer `parked_action` stops |
+
 ## 18. Capability gate
 
 Claude in Chrome is documented to fill forms, upload local files and use existing browser sessions. That covers single steps. It doesn't show that the full orchestration (Chrome, files on the Mac and the cloud API, across many jobs and more than one session) holds up. M0 tests exactly that, before any dashboard code is written.
@@ -593,6 +707,8 @@ Claude in Chrome is documented to fill forms, upload local files and use existin
 | G10 | Push reaches phone and laptop, including when the session is idle | Test notification | No | Fallback channel in 9.1 |
 | G11 | Whether LinkedIn keeps a half-filled Easy Apply after the modal closes | Close the modal mid-form and reopen | No | Treat as `needs_refill` |
 | G12 | The Workday discovery endpoint works for the first Workday companies on the watchlist | Run the adapter against them | No | Page scraping for those companies |
+| G13 | Sourav can keep using Chrome in another window while a run is going, without breaking it | Browse normally during a five-job run | No | Use a separate Chrome window for runs, or avoid Chrome during runs |
+| G14 | The agent recognises LinkedIn sign-in, checkpoint and warning pages | Check what the agent reads on LinkedIn's sign-in page, without triggering a checkpoint on purpose | Yes | Stop the run whenever a LinkedIn page isn't one the adapter recognises |
 
 ## 19. Open questions
 
@@ -605,7 +721,7 @@ Claude in Chrome is documented to fill forms, upload local files and use existin
 | C3 | Profile facts | Fill the fields in 11.1. Where a field has more than one honest answer (for example notice period with and without buyout), give both and say which to use by default |
 | C4 | Discovery filters | Locations (Bangalore only, anywhere in India, remote outside India), work mode, title exclusions, company size or stage limits if any |
 | C5 | Dream company list | Company names, in priority order if possible. Careers page URL where you know it. I'll detect the ATS |
-| C6 | Standing answers for sensitive fields | For each row in 7.3: a standing answer, or "always ask me". For compensation, also how to state current pay if it isn't a standard CTC (for example a contractor fee), so the number is stated the same way every time |
+| C6 | Standing answers for sensitive fields | For each row in 7.3 except identity documents: a standing answer, or "always ask me". For compensation, also how to state current pay if it isn't a standard CTC (for example a contractor fee), so the number is stated the same way every time |
 | C7 | Answers you've already written | Any past applications, cover letters or interview prep notes. They seed the answer bank faster than starting from blank |
 
 ### Decisions
@@ -622,3 +738,6 @@ Claude in Chrome is documented to fill forms, upload local files and use existin
 | D8 | Dashboard address | Default `*.vercel.app` subdomain, or a custom domain you own | Default subdomain. Nothing to buy or configure |
 | D9 | Fit note on discovered jobs | None, keyword match against CV tags, or an AI-written note (needs an AI API key with its own usage cost) | Keyword match in M6. AI note later if the inbox gets too long to scan |
 | D10 | Soft limit on open application tabs | 25, another number, or none | 25 to start. Check memory use on your MacBook in M0 |
+| D11 | Do submitted drafts go into the answer bank automatically? | Yes if submitted unchanged, or only after you approve each one in the dashboard | Yes if unchanged. Otherwise the answer bank only grows when you remember to approve |
+| D12 | Daily cap on LinkedIn applications | No cap, or a cap (for example 20 a day) with the rest carried to the next run | A cap. It reduces account risk, and the whole list still gets done over a few runs |
+| D13 | Import your past LinkedIn applications into the tracker on the first run | None, last 30 days, last 90 days, or all | Last 90 days, so the tracker starts with your current pipeline |

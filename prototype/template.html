@@ -123,6 +123,17 @@ details summary{cursor:pointer;color:var(--accent);font-weight:500}
 .x{border:0;background:var(--sunk);border-radius:8px;width:34px;height:34px;cursor:pointer;flex:none;margin-left:auto;font-size:18px;line-height:1}
 .toast{position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:8px;font-size:13px;z-index:30}
 .tabs{display:none}
+.kpis.k3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.meta{font-size:12px;color:var(--muted);margin-top:5px}
+.meta .stale{color:var(--warn)}
+.newtag{color:var(--accent);font-weight:600}
+.act{display:flex;align-items:center;justify-content:flex-end}
+.act .btn.primary{padding:8px 18px;text-decoration:none}
+.ask{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);flex-wrap:wrap}
+.btn.sm{padding:5px 10px;font-size:13px}
+.dfoot .btn.primary{text-decoration:none}
+.seg.big{align-self:flex-start}
+.seg.big button{padding:8px 14px;font-size:14px}
 @media (max-width:860px){
   .app{grid-template-columns:minmax(0,1fr)}
   .rail{display:none}
@@ -133,6 +144,9 @@ details summary{cursor:pointer;color:var(--accent);font-weight:500}
   .grid2{grid-template-columns:minmax(0,1fr)}
   .row{grid-template-columns:46px minmax(0,1fr)}
   .side{grid-column:2;align-items:flex-start;text-align:left;flex-direction:row;flex-wrap:wrap;gap:8px}
+  .act{grid-column:2;justify-content:flex-start}
+  .kpis.k3{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .kpi b{font-size:20px}
   .kv{grid-template-columns:100px minmax(0,1fr)}
   h1{font-size:24px}
 }
@@ -154,7 +168,7 @@ details summary{cursor:pointer;color:var(--accent);font-weight:500}
 const DATA = __DATA__;
 const JOBS = DATA.jobs, COMPANIES = DATA.companies;
 const byId = Object.fromEntries(JOBS.map(j => [j.id, j]));
-const VIEWS = [["today","Today"],["roles","Roles"],["shortlist","Shortlist"],["tracker","Tracker"],["companies","Companies"],["health","Board health"]];
+const VIEWS = [["today","Home"],["roles","Roles"],["tracker","Tracker"],["companies","Companies"],["health","Board health"]];
 const STAGES = ["Applied","Screening","Interviewing","Offer","Rejected","No response"];
 const KEY = "pm-board-proto-v1";
 let state = {s:{}};
@@ -166,28 +180,36 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 const fmtDate = d => d ? new Date(d+"T00:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"}) : "–";
 const ago = n => n==null ? "unknown" : n===0 ? "today" : n===1 ? "1 day ago" : n+" days ago";
 const isOpen = j => j.listing === "Open";
-const shortlisted = () => JOBS.filter(j => st(j.id).list === "short");
 const tracked = () => JOBS.filter(j => STAGES.includes(st(j.id).stage));
 const dismissed = id => st(id).list === "dismissed";
 
-function chipsFor(j, opts={}){
+const isNew = j => j.found && (new Date(DATA.generated)-new Date(j.found))/864e5 <= 1;
+const applied = j => STAGES.includes(st(j.id).stage);
+function keyFlag(j){
+  const f = j.flags.find(x=>x.startsWith("Work rights")) || j.flags.find(x=>x.startsWith("Asks"));
+  return f ? `<span class="chip bad">${esc(f)}</span>` : "";
+}
+function chipsFor(j){
   const c = [];
   if (j.tier) c.push(`<span class="chip star">${esc(j.tier)}</span>`);
-  c.push(`<span class="chip cv">CV: ${esc(j.cv)}</span>`);
-  c.push(`<span class="chip">${esc(j.seniority||"Other")}</span>`);
-  if (j.mode && j.mode!=="Unknown") c.push(`<span class="chip">${esc(j.mode)}</span>`);
-  if (j.fit) c.push(`<span class="chip ${j.fit==="Strong"?"good":""}">${esc(j.fit)}</span>`);
-  if (!opts.noflags) j.flags.forEach(f => c.push(`<span class="chip ${/re-checked|text/.test(f)?"warn":"bad"}">${esc(f)}</span>`));
+  c.push(`<span class="chip cv">Use ${esc(j.cv)} CV</span>`);
+  c.push(keyFlag(j));
   return `<div class="chips">${c.join("")}</div>`;
 }
-function rowHTML(j){
+function actionHTML(j){
   const s = st(j.id);
-  const tag = s.stage ? `<span class="chip good">${esc(s.stage)}</span>` : s.list==="short" ? `<span class="chip cv">Shortlisted</span>` : "";
+  if (applied(j)) return `<span class="chip good">${s.stage==="Applied"?"Applied "+fmtDate(s.appliedAt):esc(s.stage)}</span>`;
+  if (s.opened) return `<div class="ask"><span>Applied?</span><button class="btn primary sm" data-applied="${j.id}">Yes</button><button class="btn sm" data-notyet="${j.id}">Not yet</button></div>`;
+  return `<a class="btn primary" href="${esc(j.link)}" target="_blank" rel="noopener" data-apply="${j.id}">Apply</a>`;
+}
+function rowHTML(j){
+  const stale = j.verifiedAge==null || j.verifiedAge>14;
   return `<div class="row" role="button" tabindex="0" data-open="${j.id}">
     <div class="score" style="--s:${j.score}"><span>${j.score}</span></div>
     <div style="min-width:0"><div class="t1">${esc(j.role)}</div>
-      <div class="t2">${esc(j.company)} · ${esc(j.location)}</div>${chipsFor(j)}</div>
-    <div class="side"><span class="num">Found ${fmtDate(j.found)}</span><span>${esc(j.ats)}</span>${tag}</div></div>`;
+      <div class="t2">${esc(j.company)} · ${esc(j.location)}</div>${chipsFor(j)}
+      <div class="meta num">${isNew(j)?`<b class="newtag">New</b> · `:""}Found ${fmtDate(j.found)} · <span class="${stale?"stale":""}">checked ${ago(j.verifiedAge)}</span>${st(j.id).list==="saved"?" · Saved":""}</div></div>
+    <div class="act">${actionHTML(j)}</div></div>`;
 }
 function bar(label, n, max, cls=""){ const w = max ? Math.max(1, Math.round(n/max*100)) : 0;
   return `<div class="bar"><span style="overflow-wrap:anywhere">${esc(label)}</span><div class="track"><div class="fill ${cls}" style="width:${w}%"></div></div><span class="num" style="text-align:right">${n}</span></div>`; }
@@ -195,76 +217,61 @@ function countBy(arr, f){ const m = {}; arr.forEach(x => { const k = f(x); m[k] 
 
 /* ---------- views ---------- */
 function vToday(){
-  const open = JOBS.filter(j => isOpen(j) && !dismissed(j.id));
-  const top = open.filter(j => !st(j.id).stage).sort((a,b)=>b.score-a.score).slice(0,10);
-  const recent = JOBS.filter(j => j.found && (new Date(DATA.generated)-new Date(j.found))/864e5 <= 1).length;
-  const stale = JOBS.filter(j => j.flags.includes("Not re-checked 14d+")).length;
-  const t1new = JOBS.filter(j => j.tier==="Tier 1" && j.found && (new Date(DATA.generated)-new Date(j.found))/864e5 <= 7);
+  const live = JOBS.filter(j => isOpen(j) && !dismissed(j.id));
+  const fresh = live.filter(isNew).sort((a,b)=>b.score-a.score);
+  const notApplied = live.filter(j => !applied(j));
+  const best = notApplied.filter(j => !isNew(j)).sort((a,b)=>b.score-a.score).slice(0,10);
   const d = new Date(DATA.generated+"T00:00:00").toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"});
   return `
-  <div><h1>Today</h1><p class="sub">${d} · ${JOBS.length} roles tracked from ${new Set(JOBS.map(j=>j.company)).size} companies · ${recent} found in the last 24 hours</p></div>
-  ${banner()}
-  <div class="kpis">
-    <button class="kpi" data-go="roles"><b>${open.length}</b><span>Marked open</span></button>
-    <button class="kpi alert" data-go="health"><b>${stale}</b><span>Need re-check</span></button>
-    <button class="kpi" data-go="shortlist"><b>${shortlisted().length}</b><span>Shortlisted</span></button>
-    <button class="kpi" data-go="tracker"><b>${tracked().length}</b><span>In tracker</span></button>
+  <div><h1>Home</h1><p class="sub">${d}</p></div>
+  <div class="kpis k3">
+    <button class="kpi" data-goroles="New today"><b>${fresh.length}</b><span>New today</span></button>
+    <button class="kpi" data-goroles="Not applied"><b>${notApplied.length}</b><span>Not applied yet</span></button>
+    <button class="kpi" data-go="tracker"><b>${tracked().length}</b><span>Applied</span></button>
   </div>
-  <section class="section"><div class="sechead"><h2>Top 10 by score</h2><a href="#roles">See all roles</a></div>
-    <div class="list">${top.map(rowHTML).join("") || `<div class="empty"><b>Nothing left to review</b>Every open role is shortlisted, dismissed or tracked.</div>`}</div></section>
-  <section class="section"><div class="sechead"><h2>Tier 1 companies, found this week</h2><span class="t2">${t1new.length} roles</span></div>
-    <div class="list">${t1new.sort((a,b)=>b.score-a.score).slice(0,6).map(rowHTML).join("") || `<div class="empty"><b>No Tier 1 roles found in the last 7 days</b>The automation found nothing new at your Tier 1 companies this week.</div>`}</div></section>`;
+  <section class="section"><div class="sechead"><h2>New today</h2>${fresh.length>10?`<a href="#roles" data-goroles="New today">All ${fresh.length}</a>`:""}</div>
+    <div class="list">${fresh.slice(0,10).map(rowHTML).join("") || `<div class="empty"><b>No new roles yet today</b>New roles appear here after each refresh, and you get a phone alert.</div>`}</div></section>
+  <section class="section"><div class="sechead"><h2>Best matches you haven't applied to</h2><a href="#roles" data-goroles="Not applied">See all</a></div>
+    <div class="list">${best.map(rowHTML).join("") || `<div class="empty"><b>You've applied to every strong match</b>New roles will show up here as they land.</div>`}</div></section>
+  ${banner()}`;
 }
-function banner(){ return `<div class="banner"><span>Prototype built on a snapshot of your Google Sheet taken ${fmtDate(DATA.generated)}. Scores, CV suggestions and flags are computed from that snapshot. Shortlists and tracker moves are saved in this browser only.</span></div>`; }
+function banner(){ return `<div class="banner"><span>Prototype on a snapshot of your Google Sheet from ${fmtDate(DATA.generated)}. What you mark here is saved in this browser only.</span></div>`; }
 
-const F = {q:"", country:"All", seniority:"All", cv:"All", fit:"All", source:"All", hideRights:false, hideStale:false, sort:"score", limit:60};
+const F = {q:"", country:"All", status:"Not applied", seniority:"All", cv:"All", hideRights:false, sort:"score", limit:60};
 function vRoles(){
-  const opt = (k, vals) => `<select id="f-${k}" data-f="${k}" aria-label="${k}">${["All",...vals].map(v=>`<option ${F[k]===v?"selected":""}>${esc(v)}</option>`).join("")}</select>`;
+  const opt = (k, vals, label) => `<select id="f-${k}" data-f="${k}" aria-label="${label}">${["All",...vals].map(v=>`<option value="${esc(v)}" ${F[k]===v?"selected":""}>${v==="All"?label+": all":esc(v)}</option>`).join("")}</select>`;
   const uniq = f => [...new Set(JOBS.map(f).filter(Boolean))].sort();
   let list = JOBS.filter(j => !dismissed(j.id));
+  const by = {"New today": j=>isNew(j)&&isOpen(j), "Not applied": j=>!applied(j)&&isOpen(j), "Saved": j=>st(j.id).list==="saved"&&!applied(j), "Applied": applied, "All": ()=>true};
+  list = list.filter(by[F.status]);
   const q = F.q.toLowerCase();
   if (q) list = list.filter(j => (j.company+" "+j.role+" "+j.location+" "+j.category).toLowerCase().includes(q));
   if (F.country!=="All") list = list.filter(j => j.country===F.country);
   if (F.seniority!=="All") list = list.filter(j => j.seniority===F.seniority);
   if (F.cv!=="All") list = list.filter(j => j.cv.includes(F.cv));
-  if (F.fit!=="All") list = list.filter(j => j.fit===F.fit);
-  if (F.source!=="All") list = list.filter(j => j.source===F.source);
   if (F.hideRights) list = list.filter(j => !j.flags.some(f=>f.startsWith("Work rights")));
-  if (F.hideStale) list = list.filter(j => !j.flags.includes("Not re-checked 14d+"));
   const sorters = {score:(a,b)=>b.score-a.score, newest:(a,b)=>(b.found||"").localeCompare(a.found||""), company:(a,b)=>a.company.localeCompare(b.company)};
   list.sort(sorters[F.sort]);
-  return `<div><h1>Roles</h1><p class="sub">${list.length} of ${JOBS.length} roles match. Dismissed roles are hidden.</p></div>
+  return `<div><h1>Roles</h1><p class="sub">${list.length} roles</p></div>
+  <div class="seg big" role="group" aria-label="Status">${["New today","Not applied","Saved","Applied","All"].map(c=>`<button data-status="${c}" aria-pressed="${F.status===c}">${c}</button>`).join("")}</div>
   <div class="filters">
-    <input type="search" id="f-q" placeholder="Search company, title, city, domain" value="${esc(F.q)}" aria-label="Search">
+    <input type="search" id="f-q" placeholder="Search company, title, city" value="${esc(F.q)}" aria-label="Search">
     <div class="seg" role="group" aria-label="Country">${["All","India","Singapore","UAE","Europe","Remote"].map(c=>`<button data-country="${c}" aria-pressed="${F.country===c}">${c}</button>`).join("")}</div>
-    ${opt("seniority", uniq(j=>j.seniority))}${opt("cv", ["General consumer","AI","Growth","Payments"])}${opt("fit", ["Strong","Moderate"])}${opt("source", uniq(j=>j.source))}
-    <select id="f-sort" data-f="sort" aria-label="Sort"><option value="score" ${F.sort==="score"?"selected":""}>Sort: score</option><option value="newest" ${F.sort==="newest"?"selected":""}>Sort: newest found</option><option value="company" ${F.sort==="company"?"selected":""}>Sort: company</option></select>
-    <label class="tog"><input type="checkbox" id="f-rights" ${F.hideRights?"checked":""}> Hide roles needing work rights</label>
-    <label class="tog"><input type="checkbox" id="f-stale" ${F.hideStale?"checked":""}> Hide not re-checked</label>
+    ${opt("seniority", uniq(j=>j.seniority), "Level")}${opt("cv", ["General consumer","AI","Growth","Payments"], "CV")}
+    <select id="f-sort" data-f="sort" aria-label="Sort"><option value="score" ${F.sort==="score"?"selected":""}>Best match first</option><option value="newest" ${F.sort==="newest"?"selected":""}>Newest first</option><option value="company" ${F.sort==="company"?"selected":""}>Company A to Z</option></select>
+    <label class="tog"><input type="checkbox" id="f-rights" ${F.hideRights?"checked":""}> Hide roles needing work rights abroad</label>
   </div>
-  <div class="list">${list.slice(0,F.limit).map(rowHTML).join("") || `<div class="empty"><b>No roles match these filters</b>Clear a filter to see more.</div>`}</div>
+  <div class="list">${list.slice(0,F.limit).map(rowHTML).join("") || `<div class="empty"><b>No roles here</b>${F.status==="Saved"?"Open a role and choose Save for later.":"Clear a filter to see more."}</div>`}</div>
   ${list.length>F.limit?`<button class="btn" id="more">Show ${Math.min(60,list.length-F.limit)} more</button>`:""}`;
-}
-function vShortlist(){
-  const list = shortlisted().sort((a,b)=>b.score-a.score);
-  return `<div><h1>Shortlist</h1><p class="sub">Roles you plan to apply to. Open the apply link, then mark it applied to move it to the tracker.</p></div>${banner()}
-  <div class="list">${list.map(j => `<div class="row" style="cursor:default">
-      <div class="score" style="--s:${j.score}"><span>${j.score}</span></div>
-      <div style="min-width:0"><div class="t1">${esc(j.role)}</div><div class="t2">${esc(j.company)} · ${esc(j.location)}</div>${chipsFor(j,{noflags:true})}</div>
-      <div class="side" style="flex-direction:row;flex-wrap:wrap;gap:6px">
-        <a class="btn" href="${esc(j.link)}" target="_blank" rel="noopener">Apply link</a>
-        <button class="btn primary" data-applied="${j.id}">Mark applied</button>
-        <button class="btn" data-open="${j.id}">Details</button></div></div>`).join("")
-    || `<div class="empty"><b>Your shortlist is empty</b>Open any role and choose Shortlist. It will appear here with the CV to use and the apply link.</div>`}</div>`;
 }
 function vTracker(){
   const items = tracked();
-  return `<div><h1>Tracker</h1><p class="sub">${items.length ? items.length+" applications" : "No applications tracked yet"}. Change a card's stage to move it.</p></div>${banner()}
+  return `<div><h1>Tracker</h1><p class="sub">${items.length ? items.length+" applications" : "No applications yet"}. Change a card's stage as you hear back.</p></div>
   <div class="board">${STAGES.map(sname => { const col = items.filter(j=>st(j.id).stage===sname);
     return `<div class="col"><h3>${sname}<span class="num">${col.length}</span></h3>${col.map(j=>`<div class="card" data-open="${j.id}">
       <div class="t1" style="font-size:13px">${esc(j.role)}</div><div class="t2">${esc(j.company)}</div>
-      <div class="t2 num">Applied ${fmtDate(st(j.id).appliedAt)} · CV ${esc(st(j.id).cvUsed||j.cv)}</div>
-      <select data-stage="${j.id}" aria-label="Stage" onclick="event.stopPropagation()">${STAGES.map(x=>`<option ${x===sname?"selected":""}>${x}</option>`).join("")}</select></div>`).join("") || `<div class="t2" style="padding:6px 2px">${sname==="Applied"?"Mark a shortlisted role as applied to start.":"Empty"}</div>`}</div>`; }).join("")}</div>`;
+      <div class="t2 num">Applied ${fmtDate(st(j.id).appliedAt)} · ${esc(st(j.id).cvUsed||j.cv)} CV</div>
+      <select data-stage="${j.id}" aria-label="Stage" onclick="event.stopPropagation()">${STAGES.map(x=>`<option ${x===sname?"selected":""}>${x}</option>`).join("")}</select></div>`).join("") || `<div class="t2" style="padding:6px 2px">${sname==="Applied"?"Press Apply on any role, then confirm you applied.":"Empty"}</div>`}</div>`; }).join("")}</div>`;
 }
 const CF = {tier:"All", cov:"All", q:""};
 function vCompanies(){
@@ -335,9 +342,10 @@ function openDrawer(id){
       <div style="min-width:0"><h2>${esc(j.role)}</h2><div class="t2">${esc(j.company)} · ${esc(j.location)}</div>${chipsFor(j)}</div>
       <button class="x" data-close aria-label="Close">×</button></div>
     <div class="dbody">
+      <div><p class="label">Use this CV</p><p class="prose"><b>${esc(j.cv)}</b>. Signals counted: ${esc(sig)}.</p></div>
+      ${j.postLink?`<p class="prose"><a href="${esc(j.postLink)}" target="_blank" rel="noopener">Hiring post</a>${j.postedBy?" by "+esc(j.postedBy):""}</p>`:""}
       <div><p class="label">Score breakdown</p><div class="bars">${parts.map(([k,v])=>bar(k, v, k==="Not re-checked"?10:25, v<0?"bad":"")).join("")}</div></div>
-      <div><p class="label">Suggested CV</p><p class="prose"><b>${esc(j.cv)}</b>. Signals counted: ${esc(sig)}.</p></div>
-      <dl class="kv"><dt>Seniority</dt><dd>${esc(j.seniority)}</dd><dt>Work mode</dt><dd>${esc(j.mode)}</dd><dt>Category</dt><dd>${esc(j.category)}</dd>
+            <dl class="kv"><dt>Seniority</dt><dd>${esc(j.seniority)}</dd><dt>Work mode</dt><dd>${esc(j.mode)}</dd><dt>Category</dt><dd>${esc(j.category)}</dd>
         <dt>Experience asked</dt><dd>${j.years?j.years+"+ years":"Not stated"}</dd><dt>Found</dt><dd class="num">${fmtDate(j.found)}</dd><dt>Posted</dt><dd class="num">${j.posted?fmtDate(j.posted):"Not known"}</dd>
         <dt>Last verified</dt><dd class="num">${fmtDate(j.verified)} (${ago(j.verifiedAge)})</dd><dt>Listing</dt><dd>${esc(j.listing)}</dd><dt>Source</dt><dd>${esc(j.source)} · ${esc(j.ats)}</dd>
         <dt>Contact</dt><dd>${esc(j.contact)}${j.postedBy?` · ${esc(j.postedBy)}${j.posterRole?", "+esc(j.posterRole):""}`:""}</dd><dt>Sheet row</dt><dd class="num">${j.id}</dd></dl>
@@ -349,12 +357,11 @@ function openDrawer(id){
       ${s.list==="dismissed"?`<p class="t2">Dismissed: ${esc(s.reason||"")}</p>`:""}
     </div>
     <div class="dfoot">
-      <a class="btn" href="${esc(j.link)}" target="_blank" rel="noopener">Open job</a>
-      ${j.postLink?`<a class="btn" href="${esc(j.postLink)}" target="_blank" rel="noopener">Hiring post</a>`:""}
-      ${s.stage?`<span class="chip good">In tracker: ${esc(s.stage)}</span>`:
-        s.list==="short"?`<button class="btn primary" data-applied="${id}">Mark applied</button><button class="btn" data-unshort="${id}">Remove from shortlist</button>`:
-        `<button class="btn primary" data-short="${id}">Shortlist</button>
-         <select id="dismiss-reason" aria-label="Dismiss reason"><option value="">Dismiss because…</option>${REASONS.map(r=>`<option>${r}</option>`).join("")}</select>`}
+                  ${s.stage?`<span class="chip good">In tracker: ${esc(s.stage)}</span>`:`
+        <a class="btn primary" href="${esc(j.link)}" target="_blank" rel="noopener" data-apply="${id}">Apply</a>
+        <button class="btn" data-applied="${id}">I've applied</button>
+        ${s.list==="saved"?`<button class="btn" data-unsave="${id}">Unsave</button>`:`<button class="btn" data-save="${id}">Save for later</button>`}
+        <select id="dismiss-reason" data-for="${id}" aria-label="Not for me"><option value="">Not for me…</option>${REASONS.map(r=>`<option>${r}</option>`).join("")}</select>`}
     </div></aside>`;
   document.querySelector(".drawer .x").focus();
 }
@@ -365,23 +372,27 @@ function toast(msg){ const t = document.createElement("div"); t.className="toast
 function current(){ const h = location.hash.slice(1); return VIEWS.some(v=>v[0]===h) ? h : "today"; }
 function render(){
   const v = current();
-  const counts = {roles:JOBS.filter(j=>!dismissed(j.id)).length, shortlist:shortlisted().length, tracker:tracked().length, companies:COMPANIES.length};
+  const counts = {roles:JOBS.filter(j=>!dismissed(j.id)&&!applied(j)&&isOpen(j)).length, tracker:tracked().length, companies:COMPANIES.length};
   const nav = VIEWS.map(([k,l])=>`<a href="#${k}" ${k===v?'aria-current="page"':""}><span>${l}</span><span class="count">${counts[k]??""}</span></a>`).join("");
   document.getElementById("nav").innerHTML = nav;
   document.getElementById("tabs").innerHTML = VIEWS.map(([k,l])=>`<a href="#${k}" ${k===v?'aria-current="page"':""}>${l}</a>`).join("");
   document.getElementById("railfoot").innerHTML = `Snapshot ${fmtDate(DATA.generated)}<br>${JOBS.length} roles · ${COMPANIES.length} companies`;
-  const html = {today:vToday, roles:vRoles, shortlist:vShortlist, tracker:vTracker, companies:vCompanies, health:vHealth}[v]();
+  const html = {today:vToday, roles:vRoles, tracker:vTracker, companies:vCompanies, health:vHealth}[v]();
   document.getElementById("view").innerHTML = html;
 }
 window.addEventListener("hashchange", () => { closeDrawer(); render(); window.scrollTo(0,0); });
 document.addEventListener("click", e => {
-  const t = e.target.closest("[data-open],[data-close],[data-go],[data-short],[data-unshort],[data-applied],[data-country],[data-tier],[data-cov],#more");
+  const t = e.target.closest("[data-apply],[data-applied],[data-notyet],[data-save],[data-unsave],[data-close],[data-go],[data-goroles],[data-status],[data-country],[data-tier],[data-cov],#more,[data-open]");
   if (!t) return;
+  if (t.dataset.apply) { const id=+t.dataset.apply; setTimeout(()=>{ setSt(id,{opened:DATA.generated}); closeDrawer(); render(); }, 300); return; }
   if (t.dataset.close !== undefined) return closeDrawer();
+  if (t.dataset.goroles) { e.preventDefault(); F.status=t.dataset.goroles; F.limit=60; if (location.hash==="#roles") render(); else location.hash="roles"; return; }
   if (t.dataset.go) { location.hash = t.dataset.go; return; }
-  if (t.dataset.short) { setSt(+t.dataset.short,{list:"short"}); toast("Added to shortlist"); openDrawer(+t.dataset.short); render(); return; }
-  if (t.dataset.unshort) { setSt(+t.dataset.unshort,{list:null}); toast("Removed from shortlist"); closeDrawer(); render(); return; }
-  if (t.dataset.applied) { const id=+t.dataset.applied; setSt(id,{list:null, stage:"Applied", appliedAt:DATA.generated, cvUsed:byId[id].cv}); toast("Moved to tracker as Applied"); closeDrawer(); render(); return; }
+  if (t.dataset.applied) { const id=+t.dataset.applied; setSt(id,{list:null, opened:null, stage:"Applied", appliedAt:DATA.generated, cvUsed:byId[id].cv}); toast("Added to tracker as Applied"); closeDrawer(); render(); return; }
+  if (t.dataset.notyet) { setSt(+t.dataset.notyet,{opened:null}); render(); return; }
+  if (t.dataset.save) { setSt(+t.dataset.save,{list:"saved"}); toast("Saved for later"); openDrawer(+t.dataset.save); render(); return; }
+  if (t.dataset.unsave) { setSt(+t.dataset.unsave,{list:null}); toast("Removed from saved"); openDrawer(+t.dataset.unsave); render(); return; }
+  if (t.dataset.status) { F.status=t.dataset.status; F.limit=60; render(); return; }
   if (t.dataset.country) { F.country=t.dataset.country; F.limit=60; render(); return; }
   if (t.dataset.tier) { CF.tier=t.dataset.tier; render(); return; }
   if (t.dataset.cov) { CF.cov=t.dataset.cov; render(); return; }
@@ -396,9 +407,8 @@ document.addEventListener("change", e => {
   const t = e.target;
   if (t.dataset.f) { F[t.dataset.f]=t.value; F.limit=60; render(); }
   else if (t.id==="f-rights") { F.hideRights=t.checked; render(); }
-  else if (t.id==="f-stale") { F.hideStale=t.checked; render(); }
   else if (t.dataset.stage) { setSt(+t.dataset.stage,{stage:t.value}); toast("Moved to "+t.value); render(); }
-  else if (t.id==="dismiss-reason" && t.value) { const id=+document.querySelector("[data-short]").dataset.short; setSt(id,{list:"dismissed", reason:t.value}); toast("Dismissed: "+t.value); closeDrawer(); render(); }
+  else if (t.id==="dismiss-reason" && t.value) { const id=+t.dataset.for; setSt(id,{list:"dismissed", reason:t.value}); toast("Dismissed: "+t.value); closeDrawer(); render(); }
 });
 let qTimer;
 document.addEventListener("input", e => {

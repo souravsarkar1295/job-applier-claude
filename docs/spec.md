@@ -336,7 +336,7 @@ Matching a form question to a known question works in two steps. The question te
 
 ### 7.2 Drafting rules
 
-Drafted answers only use facts from the CV, the profile and approved answers. The agent never invents metrics, projects, employers or titles. Length follows the field's character limit, and when there is none, a target set per question type (default: 80 to 150 words). Company-specific questions ("Why this company?") are always written fresh for each company, even when a similar answer exists, because a copied answer reads wrong. Every draft needs Sourav's approval before it can be reused.
+Drafted answers only use facts from the CV, the profile and approved answers. The agent never invents metrics, projects, employers or titles. Length follows the field's character limit, and when there is none, a target set per question type (default: 80 to 150 words). Company-specific questions ("Why this company?") are always written fresh for each company, even when a similar answer exists, because a copied answer reads wrong. Every draft needs Sourav's approval before it can be reused. The four CVs state some figures differently, so a draft only uses facts and numbers from the CV attached to that same application. A reused answer whose numbers disagree with that CV is flagged in review.
 
 ### 7.3 Sensitive fields
 
@@ -531,7 +531,7 @@ Proposed groups and fields. Sourav fills these once (open question C3), and open
 
 ### 11.2 CV library
 
-Each CV has a name, the role types it's for, the file in Supabase Storage, the local file name in `~/job-applier/cvs`, whether it's the default, and whether it's active. The role types come from Sourav (open question C1). The four CVs and their selection rules are in 5.3. Experience and education in the profile are extracted from the General consumer CV and reviewed by Sourav.
+Each CV has a name, the role types it's for, the file in Supabase Storage, the local file name in `~/job-applier/cvs`, whether it's the default, and whether it's active. The role types come from Sourav (open question C1). The four CVs and their selection rules are in 5.3. The originals live in Sourav's own CV folder. The agent works from copies in `~/job-applier/cvs/<type>/`, each keeping the file name recruiters see, and at the start of a run it re-copies any original that is newer than its copy. Experience and education in the profile are extracted from the General consumer CV and reviewed by Sourav.
 
 ### 11.3 Answer bank
 

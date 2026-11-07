@@ -4,4 +4,4 @@ Personal job application assistant. It fills job applications from LinkedIn save
 
 Private repository. Personal data (CVs, profile, answers, compensation) is kept out of git and lives in the database only.
 
-The design spec will be added under `docs/`.
+Design spec: [`docs/spec.md`](docs/spec.md).

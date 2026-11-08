@@ -3,7 +3,7 @@
  * filtering by title and location happens in the refresh job.
  */
 
-export type Ats = "greenhouse" | "lever" | "ashby" | "workable" | "workday";
+export type Ats = "greenhouse" | "lever" | "ashby" | "workable" | "workday" | "smartrecruiters" | "eightfold" | "amazon";
 export type Posting = {
   id: string; title: string; location: string; url: string;
   postedOn: string | null; workMode: string; department: string; description: string;
@@ -21,6 +21,14 @@ export function boardFromUrl(url: string): { ats: Ats; board: string } | null {
   if (m) return { ats: "workable", board: m[1] };
   m = u.match(/https?:\/\/(([a-z0-9-]+)\.wd\d+\.myworkdayjobs\.com)\/(?:[a-z]{2}-[A-Z]{2}\/)?([A-Za-z0-9_-]+)/);
   if (m) return { ats: "workday", board: `${m[1]}|${m[2]}|${m[3]}` };
+  m = u.match(/(?:jobs|careers)\.smartrecruiters\.com\/([A-Za-z0-9_-]+)/);
+  if (m && !/^(oneclick-ui|sr-jobs)$/i.test(m[1])) return { ats: "smartrecruiters", board: m[1] };
+  m = u.match(/https?:\/\/([a-z0-9-]+\.eightfold\.ai)/);
+  if (m) {
+    const d = u.match(/[?&]domain=([a-z0-9.-]+)/i);
+    return { ats: "eightfold", board: `${m[1]}|${d ? d[1] : m[1].split(".")[0] + ".com"}` };
+  }
+  if (/amazon\.jobs/.test(u)) return { ats: "amazon", board: "amazon" };
   return null;
 }
 
@@ -97,7 +105,83 @@ export async function fetchBoard(ats: Ats, board: string): Promise<Posting[]> {
     }
     return out;
   }
+  if (ats === "smartrecruiters") {
+    const out: Posting[] = [];
+    for (const q of ["product manager", "product lead"]) {
+      const j = await getJson(`https://api.smartrecruiters.com/v1/companies/${board}/postings?q=${encodeURIComponent(q)}&limit=100`);
+      for (const p of j.content || []) {
+        if (out.some((o) => o.id === p.id)) continue;
+        const loc = p.location || {};
+        out.push({
+          id: p.id, title: p.name, location: [loc.city, loc.region, loc.country === "in" ? "India" : loc.country].filter(Boolean).join(", ") + (loc.remote ? " (Remote)" : ""),
+          url: `https://jobs.smartrecruiters.com/${board}/${p.id}`, postedOn: d10(p.releasedDate),
+          workMode: loc.remote ? "Remote" : loc.hybrid ? "Hybrid" : "Unknown", department: p.department?.label || "", description: "",
+        });
+      }
+    }
+    return out;
+  }
+  if (ats === "eightfold") {
+    const [host, domain] = board.split("|");
+    const out: Posting[] = [];
+    for (let start = 0; start < 200; start += 50) {
+      const j = await getJson(`https://${host}/api/apply/v2/jobs?domain=${domain}&query=${encodeURIComponent("product manager")}&start=${start}&num=50`);
+      const ps = j.positions || [];
+      for (const p of ps) out.push({
+        id: String(p.id), title: p.name, location: (p.locations || [p.location]).filter(Boolean).join("; "),
+        url: p.canonicalPositionUrl || `https://${host}/careers/job/${p.id}`, postedOn: p.t_create ? d10(p.t_create * 1000) : null,
+        workMode: /remote/i.test(p.work_location_option || "") ? "Remote" : /hybrid/i.test(p.work_location_option || "") ? "Hybrid" : "Unknown",
+        department: p.department || "", description: stripHtml(p.job_description || ""),
+      });
+      if (ps.length < 50) break;
+    }
+    return out;
+  }
+  if (ats === "amazon") {
+    const out: Posting[] = [];
+    for (const cc of ["IND", "ARE", "SGP", "GBR", "DEU", "IRL", "NLD", "ESP", "LUX", "JPN"]) {
+      const j = await getJson(`https://www.amazon.jobs/en/search.json?base_query=${encodeURIComponent("product manager")}&normalized_country_code%5B%5D=${cc}&result_limit=100&sort=recent`);
+      for (const p of j.jobs || []) {
+        if (out.some((o) => o.id === String(p.id_icims))) continue;
+        const posted = p.posted_date ? new Date(p.posted_date + " UTC") : null;
+        out.push({
+          id: String(p.id_icims), title: p.title, location: p.normalized_location || p.location || "",
+          url: `https://www.amazon.jobs${p.job_path}`, postedOn: posted && !isNaN(posted.getTime()) ? posted.toISOString().slice(0, 10) : null,
+          workMode: "Unknown", department: p.business_category || p.job_category || "",
+          description: stripHtml([p.description_short, p.basic_qualifications, p.preferred_qualifications].filter(Boolean).join("\n")),
+        });
+      }
+    }
+    return out;
+  }
   return [];
+}
+
+/** Fetches a company's own careers page and looks for an embedded job board link. */
+export async function scanCareersPage(url: string): Promise<{ ats: Ats; board: string } | null> {
+  if (!url) return null;
+  const direct = boardFromUrl(url);
+  if (direct) return direct;
+  try {
+    const res = await fetch(url, { headers: { "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36", accept: "text/html" }, redirect: "follow", signal: AbortSignal.timeout(20000) });
+    const fromRedirect = boardFromUrl(res.url);
+    if (fromRedirect) return fromRedirect;
+    const html = (await res.text()).slice(0, 2_000_000);
+    const patterns = [
+      /https?:\/\/(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io\/(?:embed\/job_board(?:\/js)?\?for=)?[A-Za-z0-9_-]+/,
+      /https?:\/\/jobs(?:\.eu)?\.lever\.co\/[A-Za-z0-9_-]+/,
+      /https?:\/\/jobs\.ashbyhq\.com\/[A-Za-z0-9_.%-]+/,
+      /https?:\/\/apply\.workable\.com\/[A-Za-z0-9_-]+/,
+      /https?:\/\/[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com\/(?:[a-z]{2}-[A-Z]{2}\/)?[A-Za-z0-9_-]+/,
+      /https?:\/\/(?:jobs|careers)\.smartrecruiters\.com\/[A-Za-z0-9_-]+/,
+      /https?:\/\/[a-z0-9-]+\.eightfold\.ai[^"'\s<>]*/,
+    ];
+    for (const re of patterns) {
+      const m = html.match(re);
+      if (m) { const b = boardFromUrl(m[0].replace(/&amp;/g, "&")); if (b && !/^(embed|js|api|v1)$/.test(b.board)) return b; }
+    }
+  } catch { /* unreachable or blocked */ }
+  return null;
 }
 
 const norm = (s: string) => (s || "").toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]/g, "");

@@ -6,7 +6,8 @@
  * 4. Re-scores every role and records the run, with an optional phone alert via ntfy.
  */
 import { createClient } from "@supabase/supabase-js";
-import { fetchBoard, detectBoard, boardFromUrl, type Ats, type Posting } from "../lib/boards";
+import { fetchBoard, detectBoard, boardFromUrl, scanCareersPage, type Ats, type Posting } from "../lib/boards";
+import { SITES, type SitePosting } from "../lib/sites";
 import {
   CORE_COUNTRIES, TIER1_ONLY_COUNTRIES, countryOf, dedupKey, isTargetTitle, scoreRole,
   seniorityFromTitle, todayIST,
@@ -18,8 +19,8 @@ const KEY = process.env.SUPABASE_SECRET_KEY;
 if (!URL_ || !KEY) { console.error("SUPABASE_URL and SUPABASE_SECRET_KEY must be set"); process.exit(1); }
 const db = createClient(URL_, KEY, { auth: { persistSession: false } });
 const TODAY = todayIST();
-const FETCHABLE: Ats[] = ["greenhouse", "lever", "ashby", "workable", "workday"];
-const DETECT_PER_RUN = Number(process.env.DETECT_PER_RUN || 40);
+const FETCHABLE: Ats[] = ["greenhouse", "lever", "ashby", "workable", "workday", "smartrecruiters", "eightfold", "amazon"];
+const DETECT_PER_RUN = Number(process.env.DETECT_PER_RUN || 60);
 
 type Company = { id: number; name: string; tier: string; ats: string; board: string; board_source: string; board_checked_at: string | null; active: boolean; careers_url: string };
 type Job = Record<string, any>;
@@ -56,10 +57,11 @@ async function main() {
 
   // 1. Board detection for companies without one, a few per run, retried monthly.
   const stale = (d: string | null) => !d || Date.parse(TODAY) - Date.parse(d) > 30 * 864e5;
-  const toDetect = cos.filter((c) => !c.board && stale(c.board_checked_at)).slice(0, DETECT_PER_RUN);
+  const toDetect = cos.filter((c) => !c.board && (c.board_source === "" || stale(c.board_checked_at))).slice(0, DETECT_PER_RUN);
   await pool(toDetect, 4, async (c) => {
-    const found = await detectBoard(c.name).catch(() => null);
-    const patch: Record<string, unknown> = { board_checked_at: new Date().toISOString() };
+    const found = /^amazon\b/i.test(c.name) ? { ats: "amazon" as Ats, board: "amazon" }
+      : (await scanCareersPage(c.careers_url).catch(() => null)) || (await detectBoard(c.name).catch(() => null));
+    const patch: Record<string, unknown> = { board_checked_at: new Date().toISOString(), board_source: "none" };
     if (found) Object.assign(patch, { ats: found.ats, board: found.board, board_source: "auto" });
     await db.from("companies").update(patch).eq("id", c.id);
     if (found) Object.assign(c, { ats: found.ats, board: found.board, board_source: "auto" });
@@ -137,14 +139,68 @@ async function main() {
     }
   });
 
+  // 3b. Job sites: PM roles in India and the Gulf from public job sites
+  const siteStats: string[] = [];
+  const titleKey = (company: string, title: string) => `${company}|${title}`.toLowerCase().replace(/[^a-z0-9|]/g, "");
+  const { data: openNow } = await db.from("jobs").select("id,company,role,listing");
+  const byTitle = new Map<string, number>();
+  (openNow || []).forEach((j) => byTitle.set(titleKey(j.company, j.role), j.id));
+  const tierOf = new Map(cos.map((c) => [c.name.toLowerCase(), c]));
+  for (const site of SITES) {
+    let posts: SitePosting[] = [];
+    try { posts = await site.run(TODAY); } catch (e) {
+      errors.push({ company: site.name, error: e instanceof Error ? e.message : String(e) });
+      siteStats.push(`${site.name}: failed`); continue;
+    }
+    let added = 0, seenAgain = 0;
+    for (const p of posts) {
+      if (!p.title || !p.url || !isTargetTitle(p.title)) continue;
+      const country = countryOf(p.location);
+      if (!CORE_COUNTRIES.includes(country)) continue;
+      if (p.postedOn && Date.parse(TODAY) - Date.parse(p.postedOn) > 45 * 864e5) continue;
+      const ext = `site:${p.site}:${p.id}`;
+      const known = byExt.get(ext);
+      if (known) {
+        await db.from("jobs").update({ verified_on: TODAY, listing: "Open" }).eq("id", known.id);
+        seenAgain++; continue;
+      }
+      const dupId = byTitle.get(titleKey(p.company, p.title)) ?? byDedup.get(dedupKey(p.company, p.title, p.location))?.id;
+      if (dupId) {
+        await db.from("jobs").update({ verified_on: TODAY }).eq("id", dupId);
+        seenAgain++; continue;
+      }
+      const co = tierOf.get(p.company.toLowerCase());
+      const tier = co?.tier || "";
+      const seniority = seniorityFromTitle(p.title);
+      const requirements = [p.experience ? `Experience: ${p.experience}` : "", requirementsFrom(p.description)].filter(Boolean).join(". ");
+      const s = scoreRole({
+        role: p.title, category: "", summary: summarise(p.description), requirements, seniority, location: p.location,
+        listing: "Open", tier, found: TODAY, posted: p.postedOn, verified: TODAY, today: TODAY,
+      });
+      const flags = p.agency ? [...s.flags, "Agency post"] : s.flags;
+      const { data: ins, error } = await db.from("jobs").insert({
+        external_key: ext, dedup_key: dedupKey(p.company, p.title, p.location), company: p.company || "Confidential", company_id: co?.id ?? null,
+        role: p.title, location: p.location, country: s.country, seniority, summary: summarise(p.description), requirements,
+        jd: summarise(p.description, 6000), fit: "Unreviewed", source: p.site, link: p.url, ats: p.site.toLowerCase(),
+        listing: "Open", found_on: TODAY, posted_on: p.postedOn, verified_on: TODAY, tier, score: s.score, score_parts: s.parts,
+        cv: s.cv, cv_signals: s.cvSignals, flags, years_required: s.years,
+        notes: `Found on ${p.site}${p.agency ? " via a recruiter or agency; the employer may be undisclosed" : ""}.`,
+      }).select("id").single();
+      if (error) { errors.push({ company: site.name, error: error.message }); continue; }
+      newIds.push(ins.id); added++;
+      byExt.set(ext, { id: ins.id }); byTitle.set(titleKey(p.company, p.title), ins.id);
+    }
+    siteStats.push(`${site.name}: ${posts.length} read, ${added} new, ${seenAgain} already on the board`);
+  }
+
   // 4. Re-score everything (freshness and staleness change daily)
-  const { data: all } = await db.from("jobs").select("id,external_key,company,role,category,summary,requirements,seniority,location,listing,tier,found_on,posted_on,verified_on");
+  const { data: all } = await db.from("jobs").select("id,external_key,company,role,category,summary,requirements,seniority,location,listing,tier,found_on,posted_on,verified_on,flags");
   const updates = (all || []).map((j) => {
     const s = scoreRole({
       role: j.role, category: j.category, summary: j.summary, requirements: j.requirements, seniority: j.seniority,
       location: j.location, listing: j.listing, tier: j.tier, found: j.found_on, posted: j.posted_on, verified: j.verified_on, today: TODAY,
     });
-    return { external_key: j.external_key, company: j.company, role: j.role, score: s.score, score_parts: s.parts, flags: s.flags, cv: s.cv, cv_signals: s.cvSignals, country: s.country };
+    return { external_key: j.external_key, company: j.company, role: j.role, score: s.score, score_parts: s.parts, flags: [...s.flags, ...((j.flags as string[]) || []).filter((f) => f === "Agency post")], cv: s.cv, cv_signals: s.cvSignals, country: s.country };
   });
   for (let i = 0; i < updates.length; i += 300) {
     const { error } = await db.from("jobs").upsert(updates.slice(i, i + 300), { onConflict: "external_key" });
@@ -169,6 +225,7 @@ async function main() {
     `## Refresh ${TODAY}`, summary, "",
     `Boards read: ${checked} of ${boards.length} · boards detected this run: ${toDetect.filter((c) => c.board).length} of ${toDetect.length} tried`,
     `Re-verified: ${verified} · closed: ${closed} · errors: ${errors.length}`, "",
+    "Job sites:", ...siteStats.map((x) => `- ${x}`), "",
     ...(fresh || []).slice(0, 20).map((j) => `- ${j.score} · ${j.company} · ${j.role}`),
     ...(errors.length ? ["", "Errors:", ...errors.slice(0, 20).map((e) => `- ${e.company}: ${e.error}`)] : []),
   ].join("\n");

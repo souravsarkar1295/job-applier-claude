@@ -127,9 +127,10 @@ export default function Board() {
           <div className="chips">
             {j.tier && <span className="chip star">{j.tier}</span>}
             <span className="chip cv">Use {j.cv} CV</span>{keyFlag(j)}
+            {j.flags.includes("Agency post") && <span className="chip warn">Agency post</span>}
             {j.fit === "Unreviewed" && <span className="chip">Not yet reviewed</span>}
           </div>
-          <div className="meta num">{isNew(j) && <><b className="newtag">New</b> · </>}Found {fmtDate(j.found_on)} · <span className={vAge == null || vAge > 14 ? "stale" : ""}>checked {ago(vAge)}</span>{st(j.id).list === "saved" ? " · Saved" : ""}</div>
+          <div className="meta num">{isNew(j) && <><b className="newtag">New</b> · </>}{j.source && j.source !== "Company Careers" ? `${j.source} · ` : ""}Found {fmtDate(j.found_on)} · <span className={vAge == null || vAge > 14 ? "stale" : ""}>checked {ago(vAge)}</span>{st(j.id).list === "saved" ? " · Saved" : ""}</div>
         </div>
         <div className="act"><Action j={j} /></div>
       </div>

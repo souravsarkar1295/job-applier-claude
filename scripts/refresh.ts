@@ -144,10 +144,10 @@ async function main() {
       role: j.role, category: j.category, summary: j.summary, requirements: j.requirements, seniority: j.seniority,
       location: j.location, listing: j.listing, tier: j.tier, found: j.found_on, posted: j.posted_on, verified: j.verified_on, today: TODAY,
     });
-    return { id: j.id, external_key: j.external_key, company: j.company, role: j.role, score: s.score, score_parts: s.parts, flags: s.flags, cv: s.cv, cv_signals: s.cvSignals, country: s.country };
+    return { external_key: j.external_key, company: j.company, role: j.role, score: s.score, score_parts: s.parts, flags: s.flags, cv: s.cv, cv_signals: s.cvSignals, country: s.country };
   });
   for (let i = 0; i < updates.length; i += 300) {
-    const { error } = await db.from("jobs").upsert(updates.slice(i, i + 300), { onConflict: "id" });
+    const { error } = await db.from("jobs").upsert(updates.slice(i, i + 300), { onConflict: "external_key" });
     if (error) errors.push({ company: "(re-score)", error: error.message });
   }
 

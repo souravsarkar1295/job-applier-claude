@@ -6,7 +6,7 @@
  * 4. Re-scores every role and records the run, with an optional phone alert via ntfy.
  */
 import { createClient } from "@supabase/supabase-js";
-import { fetchBoard, detectBoard, type Ats, type Posting } from "../lib/boards";
+import { fetchBoard, detectBoard, boardFromUrl, type Ats, type Posting } from "../lib/boards";
 import {
   CORE_COUNTRIES, TIER1_ONLY_COUNTRIES, countryOf, dedupKey, isTargetTitle, scoreRole,
   seniorityFromTitle, todayIST,
@@ -21,7 +21,7 @@ const TODAY = todayIST();
 const FETCHABLE: Ats[] = ["greenhouse", "lever", "ashby", "workable", "workday"];
 const DETECT_PER_RUN = Number(process.env.DETECT_PER_RUN || 40);
 
-type Company = { id: number; name: string; tier: string; ats: string; board: string; board_source: string; board_checked_at: string | null; active: boolean };
+type Company = { id: number; name: string; tier: string; ats: string; board: string; board_source: string; board_checked_at: string | null; active: boolean; careers_url: string };
 type Job = Record<string, any>;
 
 async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>) {
@@ -42,9 +42,17 @@ async function main() {
   const { data: run } = await db.from("runs").insert({ kind: "refresh" }).select("id").single();
   const errors: { company: string; error: string }[] = [];
 
-  const { data: companies, error: cErr } = await db.from("companies").select("id,name,tier,ats,board,board_source,board_checked_at,active").eq("active", true);
+  const { data: companies, error: cErr } = await db.from("companies").select("id,name,tier,ats,board,board_source,board_checked_at,active,careers_url").eq("active", true);
   if (cErr) throw cErr;
   const cos = (companies || []) as Company[];
+
+  // 1a. Boards readable straight from the careers URL (e.g. companies added in the dashboard)
+  for (const c of cos.filter((x) => !x.board && x.careers_url)) {
+    const b = boardFromUrl(c.careers_url);
+    if (!b) continue;
+    await db.from("companies").update({ ats: b.ats, board: b.board, board_source: "url" }).eq("id", c.id);
+    Object.assign(c, { ats: b.ats, board: b.board, board_source: "url" });
+  }
 
   // 1. Board detection for companies without one, a few per run, retried monthly.
   const stale = (d: string | null) => !d || Date.parse(TODAY) - Date.parse(d) > 30 * 864e5;

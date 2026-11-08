@@ -91,9 +91,12 @@ export default function Board() {
   const applied = (j: Job) => STAGES.includes(st(j.id).stage || "");
   const dismissed = (j: Job) => st(j.id).list === "dismissed";
 
+  const runLine = lastRun ? (
+    <p className="runline">Last refresh <b>{new Date(lastRun.started_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</b>{lastRun.finished_at ? ` · ${lastRun.summary}` : " · running now"}</p>
+  ) : <p className="runline">No refresh has run yet.</p>;
   if (error) return <main className="login"><div className="panel"><h1>Couldn&apos;t load the board</h1><p className="t2">{error}</p><button className="btn" onClick={() => { setError(""); load(); }}>Try again</button></div></main>;
   if (!jobs) return <main className="login"><p className="loading">Loading your board…</p></main>;
-  if (!jobs.length) return <main className="login"><div className="panel"><h1>Your board is empty</h1><p className="t2">Import your Google Sheet to start. New roles also arrive automatically from the refresh job.</p><a className="btn primary" href="/import">Import from Google Sheet</a></div></main>;
+  if (!jobs.length) return <main className="login"><div className="panel"><h1>No roles yet</h1><p className="t2">The refresh job adds roles from company job boards every 4 hours. The first ones appear after its next run.</p>{runLine}</div></main>;
 
   const tracked = jobs.filter(applied);
   const counts: Record<string, number | undefined> = { roles: jobs.filter((j) => !dismissed(j) && !applied(j) && isOpen(j)).length, tracker: tracked.length, companies: companies.length };
@@ -139,9 +142,6 @@ export default function Board() {
   const fresh = live.filter(isNew).sort((a, b) => b.score - a.score);
   const notApplied = live.filter((j) => !applied(j));
 
-  const runLine = lastRun ? (
-    <p className="runline">Last refresh <b>{new Date(lastRun.started_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</b>{lastRun.finished_at ? ` · ${lastRun.summary}` : " · running now"}</p>
-  ) : <p className="runline">No refresh has run yet. Roles come from your Sheet import.</p>;
 
   function Home() {
     const best = notApplied.filter((j) => !isNew(j)).sort((a, b) => b.score - a.score).slice(0, 10);
@@ -238,6 +238,22 @@ export default function Board() {
         <div className="stack">{cov.map(([k, n]) => <div key={k} style={{ width: `${(n / tot) * 100}%`, background: colr[k] }} title={`${k}: ${n}`} />)}</div>
         <div className="legend">{cov.map(([k, n]) => <span key={k}><i style={{ background: colr[k] }} />{k} <b className="num">{n}</b></span>)}</div>
       </div>
+      <form className="filters" onSubmit={async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.currentTarget as HTMLFormElement);
+        const name = String(fd.get("name") || "").trim();
+        if (!name) return;
+        const careers = String(fd.get("careers") || "").trim();
+        const { error: e2 } = await supabase.from("companies").insert({ name, tier: String(fd.get("tier")), careers_url: careers, notes: "Added from the dashboard" });
+        if (e2) { toast(e2.message.includes("duplicate") ? `${name} is already on the list` : "Couldn't add: " + e2.message); return; }
+        (e.currentTarget as HTMLFormElement).reset(); toast(`Added ${name}. Its job board is looked up on the next refresh.`); load();
+      }}>
+        <b style={{ fontSize: 13 }}>Add a company</b>
+        <input name="name" id="new-co" placeholder="Company name" required aria-label="Company name" style={{ flex: "1 1 160px", minWidth: 0, padding: "8px 10px", border: "1px solid var(--line)", borderRadius: 8, background: "var(--bg)" }} />
+        <input name="careers" id="new-co-url" placeholder="Careers page URL (optional)" aria-label="Careers page URL" style={{ flex: "2 1 220px", minWidth: 0, padding: "8px 10px", border: "1px solid var(--line)", borderRadius: 8, background: "var(--bg)" }} />
+        <select name="tier" id="new-co-tier" aria-label="Tier" defaultValue="Tier 1"><option>Tier 1</option><option>Tier 2</option></select>
+        <button className="btn primary">Add</button>
+      </form>
       <div className="filters">
         <input type="search" id="c-q" placeholder="Search companies" defaultValue={CF.q} aria-label="Search companies" onBlur={(e) => setCF((f) => ({ ...f, q: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter") setCF((f) => ({ ...f, q: (e.target as HTMLInputElement).value })); }} />
         <div className="seg" role="group" aria-label="Tier">{["All", "Tier 1", "Tier 2"].map((t) => <button key={t} aria-pressed={CF.tier === t} onClick={() => setCF((f) => ({ ...f, tier: t }))}>{t}</button>)}</div>
@@ -283,7 +299,7 @@ export default function Board() {
         <div className="panel"><h2>Job board behind the apply link</h2><div className="bars">{ats.map(([l, c]) => <Bar key={l} label={l} n={c} max={ats[0][1]} cls="star" />)}</div></div>
         <div className="panel"><h2>Country</h2><div className="bars">{ctry.map(([l, c]) => <Bar key={l} label={l} n={c} max={ctry[0][1]} />)}</div></div>
       </div>
-      <p className="t2"><a href="/import">Re-import from Google Sheet</a></p>
+      <p className="t2">Optional: <a href="/import">import a Google Sheet snapshot</a>. The board runs without it.</p>
     </>);
   }
 

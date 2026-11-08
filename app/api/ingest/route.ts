@@ -30,6 +30,27 @@ export async function POST(req: Request) {
 /** Companies whose careers pages the sweep should read: no job board found yet. */
 export async function GET() {
   const db = adminClient();
-  const { data } = await db.from("companies").select("name,tier,careers_url,geo").eq("active", true).eq("board", "").neq("careers_url", "").order("tier");
-  return NextResponse.json({ companies: data || [] });
+  const [{ data }, { data: runs }] = await Promise.all([
+    db.from("companies").select("name,tier,careers_url,geo").eq("active", true).eq("board", "").neq("careers_url", "").order("tier"),
+    db.from("runs").select("kind,started_at,summary,new_job_ids,alerted_at").order("started_at", { ascending: false }).limit(8),
+  ]);
+  return NextResponse.json({ companies: data || [], recentRuns: runs || [] });
+}
+
+/** Marks runs as alerted and returns the new roles they found that haven't been alerted yet. */
+export async function PATCH() {
+  const db = adminClient();
+  const { data: runs } = await db.from("runs").select("id,new_job_ids").is("alerted_at", null).not("finished_at", "is", null);
+  const ids = Array.from(new Set((runs || []).flatMap((r) => r.new_job_ids || [])));
+  const { data: jobs } = ids.length
+    ? await db.from("jobs").select("company,role,score,tier,source").in("id", ids).eq("listing", "Open").order("score", { ascending: false })
+    : { data: [] as { company: string; role: string; score: number; tier: string; source: string }[] };
+  if (runs?.length) await db.from("runs").update({ alerted_at: new Date().toISOString() }).in("id", runs.map((r) => r.id));
+  const list = jobs || [];
+  const tier1 = list.filter((j) => j.tier === "Tier 1").length;
+  const top = list[0];
+  return NextResponse.json({
+    newRoles: list.length, tier1,
+    alert: list.length ? `${list.length} new PM role${list.length > 1 ? "s" : ""} · ${tier1} at Tier 1 companies · top match: ${top.company}, ${top.role}` : "",
+  });
 }

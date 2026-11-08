@@ -164,6 +164,48 @@ export async function weekday(slug: string, today: string, maxPages = 5): Promis
   return out;
 }
 
+/* ---------- LinkedIn public (signed-out) job search ---------- */
+export async function linkedinGuest(keywords: string, location: string, today: string, maxPages = 3): Promise<SitePosting[]> {
+  const out: SitePosting[] = [];
+  for (let page = 0; page < maxPages; page++) {
+    const url = `https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=${encodeURIComponent(keywords)}&location=${encodeURIComponent(location)}&f_TPR=r604800&sortBy=DD&start=${page * 10}`;
+    const res = await fetch(url, { headers: { "user-agent": BROWSER_UA, accept: "text/html", "accept-language": "en-US,en;q=0.9" }, signal: AbortSignal.timeout(25000) });
+    if (res.status === 400 || res.status === 404) break;
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText} for LinkedIn search`);
+    const $ = cheerio.load(await res.text());
+    const cards = $("li");
+    cards.each((_, el) => {
+      const c = $(el);
+      const urn = c.find("[data-entity-urn]").attr("data-entity-urn") || "";
+      const id = (urn.match(/(\d+)$/) || [])[1];
+      const link = (c.find("a.base-card__full-link").attr("href") || c.find("a").first().attr("href") || "").split("?")[0];
+      if (!id || !link) return;
+      const company = c.find("h4").first().text().trim();
+      out.push({
+        site: "LinkedIn", id, title: c.find("h3").first().text().trim(), company,
+        location: c.find(".job-search-card__location").first().text().trim(),
+        url: link.replace(/^https:\/\/[a-z]{2}\.linkedin\.com/, "https://www.linkedin.com"),
+        postedOn: c.find("time").attr("datetime") || null, experience: "", description: "", agency: AGENCY.test(company),
+      });
+    });
+    if (cards.length < 10) break;
+    await sleep(2500);
+  }
+  return out;
+}
+
+const LI_LOCATIONS = ["Bengaluru, Karnataka, India", "India", "United Arab Emirates", "Singapore", "Qatar", "London, England, United Kingdom", "Berlin, Germany", "Amsterdam, North Holland, Netherlands", "Dublin, County Dublin, Ireland"];
+async function linkedinAll(today: string) {
+  const out: SitePosting[] = [];
+  for (const loc of LI_LOCATIONS) {
+    for (const kw of ["product manager", "senior product manager"]) {
+      out.push(...(await linkedinGuest(kw, loc, today, loc.startsWith("Bengaluru") || loc === "India" ? 3 : 2)));
+      await sleep(2000);
+    }
+  }
+  return out;
+}
+
 export type SiteRun = { name: string; run: (today: string) => Promise<SitePosting[]> };
 export const SITES: SiteRun[] = [
   { name: "Naukrigulf UAE", run: (t) => naukrigulf("uae", t) },
@@ -174,4 +216,5 @@ export const SITES: SiteRun[] = [
   { name: "foundit Gulf UAE", run: (t) => founditGulf("united arab emirates", t) },
   { name: "Weekday Bengaluru", run: (t) => weekday("product-manager-jobs-in-bangalore", t) },
   { name: "Weekday India remote", run: (t) => weekday("product-manager-jobs-in-india-remote", t, 2) },
+  { name: "LinkedIn (signed out)", run: (t) => linkedinAll(t) },
 ];

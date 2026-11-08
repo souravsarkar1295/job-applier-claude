@@ -116,17 +116,17 @@ export async function gulftalent(country: "uae" | "qatar", today: string, maxPag
 }
 
 /* ---------- foundit Gulf (JSON search endpoint used by its own site) ---------- */
-export async function founditGulf(location: string, today: string, maxPages = 3): Promise<SitePosting[]> {
+export async function foundit(host: "www.founditgulf.com" | "www.foundit.in", site: string, location: string, today: string, maxPages = 3): Promise<SitePosting[]> {
   const out: SitePosting[] = [];
   for (let page = 0; page < maxPages; page++) {
-    const url = `https://www.founditgulf.com/middleware/jobsearch?query=${encodeURIComponent("product manager")}&locations=${encodeURIComponent(location)}&start=${page * 25}&limit=25&sort=1`;
-    const j = await (await get(url, { accept: "application/json, text/plain, */*", referer: `https://www.founditgulf.com/srp/results?query=product%20manager&locations=${encodeURIComponent(location)}`, origin: "https://www.founditgulf.com", "x-requested-with": "XMLHttpRequest" })).json();
+    const url = `https://${host}/middleware/jobsearch?query=${encodeURIComponent("product manager")}&locations=${encodeURIComponent(location)}&start=${page * 25}&limit=25&sort=1`;
+    const j = await (await get(url, { accept: "application/json, text/plain, */*", referer: `https://${host}/srp/results?query=product%20manager&locations=${encodeURIComponent(location)}`, origin: `https://${host}`, "x-requested-with": "XMLHttpRequest" })).json();
     const data = j?.jobSearchResponse?.data || [];
     for (const p of data) {
       const company = p.hideCompanyName ? "Confidential" : p.companyName || "";
       out.push({
-        site: "foundit Gulf", id: String(p.jobId || p.id), title: p.title, company, location: p.locations || "",
-        url: (p.seoJdUrl || p.jdUrl) ? `https://www.founditgulf.com${p.seoJdUrl || p.jdUrl}` : p.redirectUrl || p.applyUrl || "",
+        site, id: String(p.jobId || p.id), title: p.title, company, location: p.locations || "",
+        url: (p.seoJdUrl || p.jdUrl) ? `https://${host}${p.seoJdUrl || p.jdUrl}` : p.redirectUrl || p.applyUrl || "",
         postedOn: p.createdAt ? new Date(p.createdAt).toISOString().slice(0, 10) : null,
         experience: p.minimumExperience?.years != null ? `${p.minimumExperience.years}-${p.maximumExperience?.years ?? ""} years` : "",
         description: p.skills || "", agency: p.hideCompanyName || AGENCY.test(company),
@@ -134,6 +134,63 @@ export async function founditGulf(location: string, today: string, maxPages = 3)
     }
     if (data.length < 20) break;
     await sleep(1200);
+  }
+  return out;
+}
+export const founditGulf = (location: string, today: string) => foundit("www.founditgulf.com", "foundit Gulf", location, today);
+
+/** MyCareersFuture, the Singapore government job portal (public search API used by its own site). */
+export async function myCareersFuture(today: string, maxPages = 3): Promise<SitePosting[]> {
+  const out: SitePosting[] = [];
+  for (let page = 0; page < maxPages; page++) {
+    const res = await fetch(`https://api.mycareersfuture.gov.sg/v2/search?limit=50&page=${page}`, {
+      method: "POST", signal: AbortSignal.timeout(25000),
+      headers: { "user-agent": BROWSER_UA, "content-type": "application/json", accept: "application/json", origin: "https://www.mycareersfuture.gov.sg", referer: "https://www.mycareersfuture.gov.sg/" },
+      body: JSON.stringify({ search: "product manager", sortBy: ["new_posting_date"] }),
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText} for MyCareersFuture search`);
+    const j = await res.json();
+    const data: any[] = j?.results || [];
+    for (const p of data) {
+      const m = p.metadata || {};
+      const hidden = !!m.isHideHiringEmployerName;
+      const company = (!hidden && p.hiringCompany?.name) || p.postedCompany?.name || "";
+      out.push({
+        site: "MyCareersFuture", id: String(p.uuid), title: p.title, company: hidden ? "Confidential" : company,
+        location: p.address?.overseasCountry ? String(p.address.overseasCountry) : "Singapore",
+        url: m.jobDetailsUrl || `https://www.mycareersfuture.gov.sg/job/${p.uuid}`, postedOn: m.newPostingDate || null,
+        experience: p.minimumYearsExperience != null ? `${p.minimumYearsExperience}+ years` : "",
+        description: (p.skills || []).map((x: any) => x.skill).join(", "),
+        agency: hidden || !!m.isPostedOnBehalf || AGENCY.test(p.postedCompany?.name || ""),
+      });
+    }
+    if (data.length < 50) break;
+    await sleep(1200);
+  }
+  return out;
+}
+
+/** JobStreet (SEEK Asia): Singapore, Malaysia, Indonesia. */
+const JOBSTREET = { SG: ["sg.jobstreet.com", "Singapore", "en-SG"], MY: ["my.jobstreet.com", "Malaysia", "en-MY"], ID: ["id.jobstreet.com", "Indonesia", "en-ID"] } as const;
+export async function jobstreet(market: keyof typeof JOBSTREET, today: string, maxPages = 3): Promise<SitePosting[]> {
+  const [host, country, locale] = JOBSTREET[market];
+  const out: SitePosting[] = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const url = `https://${host}/api/jobsearch/v5/search?siteKey=${market}-Main&keywords=${encodeURIComponent("product manager")}&page=${page}&pageSize=30&sortmode=ListedDate&daterange=7&locale=${locale}`;
+    const j = await (await get(url, { accept: "application/json", referer: `https://${host}/product-manager-jobs` })).json();
+    const data: any[] = j?.data || [];
+    for (const p of data) {
+      const company = p.companyName || p.advertiser?.description || "";
+      const label = p.locations?.[0]?.label || "";
+      out.push({
+        site: "JobStreet", id: String(p.id), title: p.title, company,
+        location: label.toLowerCase().includes(country.toLowerCase()) ? label : [label, country].filter(Boolean).join(", "),
+        url: `https://${host}/job/${p.id}`, postedOn: p.listingDate ? String(p.listingDate).slice(0, 10) : null, experience: "",
+        description: [p.teaser, ...(p.bulletPoints || [])].filter(Boolean).join("\n"), agency: AGENCY.test(company),
+      });
+    }
+    if (data.length < 30) break;
+    await sleep(1500);
   }
   return out;
 }
@@ -173,6 +230,12 @@ export const SITES: SiteRun[] = [
   { name: "Bayt Qatar", run: (t) => bayt("qatar", t, 1) },
   { name: "GulfTalent UAE", run: (t) => gulftalent("uae", t) },
   { name: "foundit Gulf UAE", run: (t) => founditGulf("united arab emirates", t) },
+  { name: "foundit India Bengaluru", run: (t) => foundit("www.foundit.in", "foundit India", "bengaluru", t) },
+  { name: "foundit India", run: (t) => foundit("www.foundit.in", "foundit India", "india", t, 4) },
+  { name: "MyCareersFuture Singapore", run: (t) => myCareersFuture(t) },
+  { name: "JobStreet Singapore", run: (t) => jobstreet("SG", t) },
+  { name: "JobStreet Malaysia", run: (t) => jobstreet("MY", t, 2) },
+  { name: "JobStreet Indonesia", run: (t) => jobstreet("ID", t, 2) },
   { name: "Weekday Bengaluru", run: (t) => weekday("product-manager-jobs-in-bangalore", t) },
   { name: "Weekday India remote", run: (t) => weekday("product-manager-jobs-in-india-remote", t, 2) },
 ];

@@ -1,6 +1,6 @@
 # Chrome sweep
 
-Some sources block cloud servers (Bayt, GulfTalent, Indeed UAE), and many companies run their own careers site with no public job board API. The GitHub refresh job can't read those. This sweep reads them in Sourav's own Chrome, where the pages load normally, and sends what it finds to the dashboard. foundit Gulf and Naukrigulf work from GitHub, so the sweep skips them.
+Some sources block cloud servers (Bayt, GulfTalent, Indeed UAE), and many companies run their own careers site with no public job board API. The GitHub refresh job can't read those. This sweep reads them in Sourav's own Chrome, where the pages load normally, and sends what it finds to the dashboard. Naukrigulf, foundit (Gulf and India), Weekday, MyCareersFuture and JobStreet are read by the GitHub job, so the sweep skips them.
 
 It runs as a Claude scheduled task every 4 hours (about 30 minutes after the GitHub refresh), on Sourav's Mac, with Chrome open and signed in to the dashboard. Its final message is the phone alert.
 

@@ -8,6 +8,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { fetchBoard, detectBoard, boardFromUrl, scanCareersPage, type Ats, type Posting } from "../lib/boards";
 import { SITES, type SitePosting } from "../lib/sites";
+import { ingestPostings, summarise, requirementsFrom } from "../lib/ingest";
 import {
   CORE_COUNTRIES, TIER1_ONLY_COUNTRIES, countryOf, dedupKey, isTargetTitle, scoreRole,
   seniorityFromTitle, todayIST,
@@ -30,14 +31,6 @@ async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>) {
   await Promise.all(Array.from({ length: n }, async () => { while (i < items.length) await fn(items[i++]); }));
 }
 
-function summarise(text: string, max = 600) {
-  const t = (text || "").replace(/\s+/g, " ").trim();
-  return t.length > max ? t.slice(0, max - 1) + "…" : t;
-}
-function requirementsFrom(text: string) {
-  const lines = (text || "").split(/\n|(?<=\.)\s+/).filter((l) => /years|experience|degree|language|fluent|japanese|arabic|thai|bahasa/i.test(l));
-  return summarise(lines.slice(0, 6).join(" "), 500);
-}
 
 async function main() {
   const { data: run } = await db.from("runs").insert({ kind: "refresh" }).select("id").single();
@@ -141,56 +134,16 @@ async function main() {
 
   // 3b. Job sites: PM roles in India and the Gulf from public job sites
   const siteStats: string[] = [];
-  const titleKey = (company: string, title: string) => `${company}|${title}`.toLowerCase().replace(/[^a-z0-9|]/g, "");
-  const { data: openNow } = await db.from("jobs").select("id,company,role,listing");
-  const byTitle = new Map<string, number>();
-  (openNow || []).forEach((j) => byTitle.set(titleKey(j.company, j.role), j.id));
-  const tierOf = new Map(cos.map((c) => [c.name.toLowerCase(), c]));
   for (const site of SITES) {
     let posts: SitePosting[] = [];
     try { posts = await site.run(TODAY); } catch (e) {
       errors.push({ company: site.name, error: e instanceof Error ? e.message : String(e) });
-      siteStats.push(`${site.name}: failed`); continue;
+      siteStats.push(`${site.name}: blocked or failed (covered by the Chrome sweep)`); continue;
     }
-    let added = 0, seenAgain = 0;
-    for (const p of posts) {
-      if (!p.title || !p.url || !isTargetTitle(p.title)) continue;
-      const country = countryOf(p.location);
-      if (!CORE_COUNTRIES.includes(country)) continue;
-      if (p.postedOn && Date.parse(TODAY) - Date.parse(p.postedOn) > 45 * 864e5) continue;
-      const ext = `site:${p.site}:${p.id}`;
-      const known = byExt.get(ext);
-      if (known) {
-        await db.from("jobs").update({ verified_on: TODAY, listing: "Open" }).eq("id", known.id);
-        seenAgain++; continue;
-      }
-      const dupId = byTitle.get(titleKey(p.company, p.title)) ?? byDedup.get(dedupKey(p.company, p.title, p.location))?.id;
-      if (dupId) {
-        await db.from("jobs").update({ verified_on: TODAY }).eq("id", dupId);
-        seenAgain++; continue;
-      }
-      const co = tierOf.get(p.company.toLowerCase());
-      const tier = co?.tier || "";
-      const seniority = seniorityFromTitle(p.title);
-      const requirements = [p.experience ? `Experience: ${p.experience}` : "", requirementsFrom(p.description)].filter(Boolean).join(". ");
-      const s = scoreRole({
-        role: p.title, category: "", summary: summarise(p.description), requirements, seniority, location: p.location,
-        listing: "Open", tier, found: TODAY, posted: p.postedOn, verified: TODAY, today: TODAY,
-      });
-      const flags = p.agency ? [...s.flags, "Agency post"] : s.flags;
-      const { data: ins, error } = await db.from("jobs").insert({
-        external_key: ext, dedup_key: dedupKey(p.company, p.title, p.location), company: p.company || "Confidential", company_id: co?.id ?? null,
-        role: p.title, location: p.location, country: s.country, seniority, summary: summarise(p.description), requirements,
-        jd: summarise(p.description, 6000), fit: "Unreviewed", source: p.site, link: p.url, ats: p.site.toLowerCase(),
-        listing: "Open", found_on: TODAY, posted_on: p.postedOn, verified_on: TODAY, tier, score: s.score, score_parts: s.parts,
-        cv: s.cv, cv_signals: s.cvSignals, flags, years_required: s.years,
-        notes: `Found on ${p.site}${p.agency ? " via a recruiter or agency; the employer may be undisclosed" : ""}.`,
-      }).select("id").single();
-      if (error) { errors.push({ company: site.name, error: error.message }); continue; }
-      newIds.push(ins.id); added++;
-      byExt.set(ext, { id: ins.id }); byTitle.set(titleKey(p.company, p.title), ins.id);
-    }
-    siteStats.push(`${site.name}: ${posts.length} read, ${added} new, ${seenAgain} already on the board`);
+    const r = await ingestPostings(db, posts, TODAY);
+    newIds.push(...r.newIds);
+    r.errors.forEach((e) => errors.push({ company: site.name, error: e }));
+    siteStats.push(`${site.name}: ${posts.length} read, ${r.newIds.length} new, ${r.seenAgain} already on the board`);
   }
 
   // 4. Re-score everything (freshness and staleness change daily)

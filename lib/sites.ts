@@ -120,7 +120,7 @@ export async function founditGulf(location: string, today: string, maxPages = 3)
   const out: SitePosting[] = [];
   for (let page = 0; page < maxPages; page++) {
     const url = `https://www.founditgulf.com/middleware/jobsearch?query=${encodeURIComponent("product manager")}&locations=${encodeURIComponent(location)}&start=${page * 25}&limit=25&sort=1`;
-    const j = await (await get(url, { accept: "application/json" })).json();
+    const j = await (await get(url, { accept: "application/json, text/plain, */*", referer: `https://www.founditgulf.com/srp/results?query=product%20manager&locations=${encodeURIComponent(location)}`, origin: "https://www.founditgulf.com", "x-requested-with": "XMLHttpRequest" })).json();
     const data = j?.jobSearchResponse?.data || [];
     for (const p of data) {
       const company = p.hideCompanyName ? "Confidential" : p.companyName || "";

@@ -16,7 +16,7 @@ It runs as a Claude scheduled task that needs Sourav's Mac, with Chrome open and
 
 1. Open a tab at `https://job-applier-claude.vercel.app/`. If it shows the sign-in page, stop and report that Sourav needs to sign in again.
 2. In that tab, run `await (await fetch('/api/ingest')).json()` to get the companies whose careers pages need reading (no job board found yet).
-3. Job sites. For each search page below, open it in a second tab, run the matching extraction snippet, then post the result from the dashboard tab with
+3. Job sites. For each search page below, open it in a second tab and run the matching extraction snippet. Keep only titles containing "product manager", "product lead" or "manager, product", and return a compact result so it fits in your context. The two tabs are on different sites, so carry the result yourself (the clipboard does not work reliably here). Then post it from the dashboard tab with
    `await (await fetch('/api/ingest', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({source: '<site>', postings: <array>})})).json()`.
 
    | Site | Search page |

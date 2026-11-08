@@ -1,13 +1,13 @@
 # Chrome sweep
 
-Some sources block cloud servers (Bayt, GulfTalent, Indeed UAE, LinkedIn's signed-out search), and many companies run their own careers site with no public job board API. The GitHub refresh job can't read those. This sweep reads them in Sourav's own Chrome, where the pages load normally, and sends what it finds to the dashboard. foundit Gulf and Naukrigulf work from GitHub, so the sweep skips them.
+Some sources block cloud servers (Bayt, GulfTalent, Indeed UAE), and many companies run their own careers site with no public job board API. The GitHub refresh job can't read those. This sweep reads them in Sourav's own Chrome, where the pages load normally, and sends what it finds to the dashboard. foundit Gulf and Naukrigulf work from GitHub, so the sweep skips them.
 
 It runs as a Claude scheduled task every 4 hours (about 30 minutes after the GitHub refresh), on Sourav's Mac, with Chrome open and signed in to the dashboard. Its final message is the phone alert.
 
 ## Rules
 
 - Read only. Never apply, save, sign in, accept cookie banners beyond declining non-essential ones, or message anyone.
-- LinkedIn is read signed out only: requests use `credentials: 'omit'`, so Sourav's LinkedIn session is never sent or touched.
+- Never open, read or search LinkedIn in any form, signed in or signed out.
 - Keep only Product Manager, Senior PM, Lead PM, Principal PM and Product Lead roles. Skip Associate or Assistant PM, interns, product marketing, project and program managers.
 - Keep only roles in India, UAE, Singapore, Qatar or Europe. Bangkok, Kuala Lumpur, Jakarta and Tokyo count only for Tier 1 companies. (The dashboard also applies this filter.)
 - If a site shows a CAPTCHA, a verification page or a sign-in wall, skip it and note it in the summary. Never try to get past it.
@@ -59,35 +59,8 @@ It runs as a Claude scheduled task every 4 hours (about 30 minutes after the Git
        url: 'https://ae.indeed.com/viewjob?jk=' + c.dataset.jk, postedOn: null }; }).filter(p => keep(p.title))
    ```
 
-3. **LinkedIn, signed out.** Open a tab at `https://www.linkedin.com/robots.txt` (a plain page on LinkedIn's site, so requests stay same-site). Start the search in the background:
-   ```js
-   window.__li = {done:false, status:'ok', rows:[]};
-   (async () => {
-     const keep = t => /(product manager|product lead|manager,? product|head of product)/i.test(t||'') && !/(marketing|associate|assistant|intern|junior|graduate|apm\b|project manager|program manager|programme manager|owner|analyst|designer|engineer)/i.test(t||'');
-     const LOCS = ['Bengaluru, Karnataka, India','India','United Arab Emirates','Singapore','Qatar','London, England, United Kingdom','Berlin, Germany','Amsterdam, North Holland, Netherlands','Dublin, County Dublin, Ireland'];
-     const seen = new Set();
-     try {
-       for (const kw of ['product manager','senior product manager']) for (const loc of LOCS) for (let page = 0; page < 2; page++) {
-         const r = await fetch(`/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=${encodeURIComponent(kw)}&location=${encodeURIComponent(loc)}&f_TPR=r86400&sortBy=DD&start=${page*10}`, {credentials:'omit'});
-         if (r.status === 429) { window.__li.status = 'rate limited'; throw 0; }
-         if (!r.ok) break;
-         const doc = new DOMParser().parseFromString(await r.text(), 'text/html'); const cards = doc.querySelectorAll('li');
-         cards.forEach(c => { const id = ((c.querySelector('[data-entity-urn]')?.getAttribute('data-entity-urn')||'').match(/(\d+)$/)||[])[1];
-           const title = c.querySelector('h3')?.textContent.trim();
-           if (!id || seen.has(id) || !keep(title)) return; seen.add(id);
-           window.__li.rows.push([id, title, c.querySelector('h4')?.textContent.trim()||'', c.querySelector('.job-search-card__location')?.textContent.trim()||'', c.querySelector('time')?.getAttribute('datetime')||null]); });
-         if (cards.length < 10) break;
-         await new Promise(s => setTimeout(s, 1500));
-       }
-     } catch (e) { if (e !== 0) window.__li.status = String(e); }
-     window.__li.done = true;
-   })(); 'started'
-   ```
-   Check `window.__li.done` every 20 seconds until true, then read `JSON.stringify(window.__li)`. In the dashboard tab, post with source `LinkedIn`, mapping each row to
-   `{site:'LinkedIn', id, title, company, location, postedOn, url:'https://www.linkedin.com/jobs/view/'+id}`. If the status is "rate limited", post what was collected and note it.
+3. **Careers pages.** Take 15 companies from step 1, starting at position `((day of the year × 6) + floor(IST hour ÷ 4)) × 15 mod total`, so every company is read about once a day. For each, open its careers page, use the site's own search or filters for "product manager" if it has them, and collect matching roles with title, location and the role's own link. Post them with `source: 'Careers page'`, each posting as `{site:'Careers page', id: <role link>, title, company: <company name from step 1>, location, url: <role link>, postedOn: null}`. If a page needs sign-in or shows nothing useful, move on.
 
-4. **Careers pages.** Take 15 companies from step 1, starting at position `((day of the year × 6) + floor(IST hour ÷ 4)) × 15 mod total`, so every company is read about once a day. For each, open its careers page, use the site's own search or filters for "product manager" if it has them, and collect matching roles with title, location and the role's own link. Post them with `source: 'Careers page'`, each posting as `{site:'Careers page', id: <role link>, title, company: <company name from step 1>, location, url: <role link>, postedOn: null}`. If a page needs sign-in or shows nothing useful, move on.
+4. **Alert.** In the dashboard tab run `await (await fetch('/api/ingest', {method:'PATCH'})).json()`. This covers new roles from the GitHub refresh as well as this sweep.
 
-5. **Alert.** In the dashboard tab run `await (await fetch('/api/ingest', {method:'PATCH'})).json()`. This covers new roles from the GitHub refresh as well as this sweep.
-
-6. Close every tab you opened. Finish with the alert text as the first line (or "No new PM roles since the last alert."), then one short line: roles added per source, and any source that was blocked.
+5. Close every tab you opened. Finish with the alert text as the first line (or "No new PM roles since the last alert."), then one short line: roles added per source, and any source that was blocked.

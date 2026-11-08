@@ -102,7 +102,7 @@ export function seniorityFromTitle(title: string): string {
 export function isTargetTitle(title: string): boolean {
   const t = (title || "").toLowerCase();
   if (!/(product manager|product lead|manager,? product|product management lead|head of product)/.test(t)) return false;
-  if (/(marketing|associate|intern|junior|graduate|apm\b|project manager|program manager|programme manager|owner|analyst|designer|engineer)/.test(t)) return false;
+  if (/(marketing|associate|assistant|intern|junior|graduate|apm\b|project manager|program manager|programme manager|owner|analyst|designer|engineer)/.test(t)) return false;
   return true;
 }
 

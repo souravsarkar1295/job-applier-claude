@@ -195,7 +195,7 @@ export async function linkedinGuest(keywords: string, location: string, today: s
 }
 
 const LI_LOCATIONS = ["Bengaluru, Karnataka, India", "India", "United Arab Emirates", "Singapore", "Qatar", "London, England, United Kingdom", "Berlin, Germany", "Amsterdam, North Holland, Netherlands", "Dublin, County Dublin, Ireland"];
-async function linkedinAll(today: string) {
+export async function linkedinAll(today: string) {
   const out: SitePosting[] = [];
   for (const loc of LI_LOCATIONS) {
     for (const kw of ["product manager", "senior product manager"]) {
@@ -216,5 +216,5 @@ export const SITES: SiteRun[] = [
   { name: "foundit Gulf UAE", run: (t) => founditGulf("united arab emirates", t) },
   { name: "Weekday Bengaluru", run: (t) => weekday("product-manager-jobs-in-bangalore", t) },
   { name: "Weekday India remote", run: (t) => weekday("product-manager-jobs-in-india-remote", t, 2) },
-  { name: "LinkedIn (signed out)", run: (t) => linkedinAll(t) },
+  // LinkedIn signed-out search returns 429 from GitHub servers, so the Chrome sweep reads it instead.
 ];

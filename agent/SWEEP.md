@@ -32,7 +32,7 @@ It runs as a Claude scheduled task every 4 hours (about 30 minutes after the Git
    | GulfTalent | `https://www.gulftalent.com/uae/jobs/title/product-manager` |
    | Indeed UAE | `https://ae.indeed.com/jobs?q=product+manager&l=United+Arab+Emirates&sort=date&fromage=3` |
 
-   Title filter used in every snippet:
+   Title filter, defined at the start of the same JavaScript call as each snippet:
    ```js
    const keep = t => /(product manager|product lead|manager,? product|head of product)/i.test(t||'') && !/(marketing|associate|assistant|intern|junior|graduate|apm\b|project manager|program manager|programme manager|owner|analyst|designer|engineer)/i.test(t||'');
    ```

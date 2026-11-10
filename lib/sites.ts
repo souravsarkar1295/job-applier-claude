@@ -3,10 +3,11 @@
  * newest first, limited to a few pages per run.
  */
 import * as cheerio from "cheerio";
+import { countryOf } from "./score";
 
 export type SitePosting = {
   site: string; id: string; title: string; company: string; location: string; url: string;
-  postedOn: string | null; experience: string; description: string; agency: boolean;
+  postedOn: string | null; experience: string; description: string; agency: boolean; workMode?: string;
 };
 
 const BROWSER_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
@@ -170,6 +171,33 @@ export async function myCareersFuture(today: string, maxPages = 3): Promise<Site
   return out;
 }
 
+/** iimjobs, mid-to-senior roles in India (public search API used by its own site, read signed out). */
+export async function iimjobs(today: string, maxPages = 4): Promise<SitePosting[]> {
+  const out: SitePosting[] = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const url = `https://gladiator.iimjobs.com/job/search?query=${encodeURIComponent("product manager")}&page=${page}&posting=7`;
+    const j = await (await get(url, { accept: "application/json", origin: "https://www.iimjobs.com", referer: "https://www.iimjobs.com/" })).json();
+    const data: any[] = j?.data || [];
+    for (const p of data) {
+      const names = ((p.locations || p.location || []) as any[]).map((l) => l?.name).filter(Boolean);
+      let location = names.join(", ");
+      if (["Other", "Remote"].includes(countryOf(location))) location = [location, "India"].filter(Boolean).join(", ");
+      const company = p.confidential ? "Confidential" : p.companyData?.companyName || "";
+      const ms = Number(p.createdTimeMs || p.createdTime) || 0;
+      out.push({
+        site: "iimjobs", id: String(p.id), title: p.title, company, location,
+        url: p.jobDetailUrl || `https://www.iimjobs.com/j/${p.id}`, postedOn: ms ? new Date(ms).toISOString().slice(0, 10) : null,
+        experience: p.min != null ? `${p.min}-${p.max ?? ""} years` : "",
+        description: (p.tags || []).map((t: any) => t?.name).filter(Boolean).join(", "),
+        agency: !!p.confidential || AGENCY.test(company), workMode: p.workFromHome ? "Remote" : undefined,
+      });
+    }
+    if (data.length < 50) break;
+    await sleep(1200);
+  }
+  return out;
+}
+
 /** JobStreet (SEEK Asia): Singapore, Malaysia, Indonesia. */
 const JOBSTREET = { SG: ["sg.jobstreet.com", "Singapore", "en-SG"], MY: ["my.jobstreet.com", "Malaysia", "en-MY"], ID: ["id.jobstreet.com", "Indonesia", "en-ID"] } as const;
 export async function jobstreet(market: keyof typeof JOBSTREET, today: string, maxPages = 3): Promise<SitePosting[]> {
@@ -233,6 +261,7 @@ export const SITES: SiteRun[] = [
   { name: "foundit India Bengaluru", run: (t) => foundit("www.foundit.in", "foundit India", "bengaluru", t) },
   { name: "foundit India", run: (t) => foundit("www.foundit.in", "foundit India", "india", t, 4) },
   { name: "MyCareersFuture Singapore", run: (t) => myCareersFuture(t) },
+  { name: "iimjobs India", run: (t) => iimjobs(t) },
   { name: "JobStreet Singapore", run: (t) => jobstreet("SG", t) },
   { name: "JobStreet Malaysia", run: (t) => jobstreet("MY", t, 2) },
   { name: "JobStreet Indonesia", run: (t) => jobstreet("ID", t, 2) },
